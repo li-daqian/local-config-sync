@@ -13,6 +13,60 @@ local-config doctor
 local-config unlink
 ```
 
+## 通用调用协议
+
+所有需要被 IDE plugin、desktop app 或 local agent 调用的命令必须支持 `--json`。
+
+通用约束：
+
+- `stdout` 在 `--json` 模式下只输出机器可读 JSON。
+- `stderr` 用于人类可读诊断信息、底层 Git 输出摘要和日志提示。
+- exit code 为 0 表示成功。
+- exit code 非 0 表示失败，调用方不得只靠解析错误文本判断失败原因。
+- 公共 JSON 响应必须对应命名模型，避免在跨模块边界长期传播匿名 object bag。
+
+建议 exit code：
+
+```text
+0  success
+1  generic_error
+2  invalid_arguments
+3  not_configured
+4  conflict
+5  auth_failed
+6  git_failed
+7  filesystem_failed
+8  unsafe_secret_pattern
+```
+
+成功响应基础模型：
+
+```json
+{
+  "ok": true,
+  "command": "status",
+  "projectPath": "/path/to/business-project"
+}
+```
+
+失败响应基础模型：
+
+```json
+{
+  "ok": false,
+  "command": "sync",
+  "error": {
+    "code": "conflict",
+    "message": "Remote and local config changed at the same mapped path.",
+    "details": {
+      "paths": ["config/application-dev.yml"]
+    }
+  }
+}
+```
+
+`details` 只用于边界层承载命令相关的补充诊断信息。已知字段应优先沉淀为命名响应模型，例如 `StatusResponse`、`MappingSummary`、`ConflictSummary`。
+
 ## init
 
 初始化用户级配置。
@@ -107,7 +161,7 @@ status
 展示当前状态。
 
 ```bash
-local-config status --project .
+local-config status --project . --json
 ```
 
 输出信息：
@@ -121,6 +175,41 @@ local-config status --project .
 - exclude 状态。
 - private repo dirty 状态。
 - last sync time。
+
+JSON 响应模型：
+
+```json
+{
+  "ok": true,
+  "command": "status",
+  "projectPath": "/path/to/business-project",
+  "state": "synced",
+  "privateRepoPath": "/home/user/private-configs",
+  "mappings": [
+    {
+      "remotePath": "ai-rvis-agent/config",
+      "targetPath": "config",
+      "mode": "symlink",
+      "mappedFiles": ["config/application-dev.yml"],
+      "excludeConfigured": true
+    }
+  ],
+  "privateRepoDirty": false,
+  "lastSyncTime": "2026-07-02T10:00:00Z"
+}
+```
+
+状态枚举：
+
+```text
+not_configured
+synced
+pending
+syncing
+failed
+conflict
+paused
+```
 
 ## doctor
 
@@ -149,4 +238,3 @@ local-config unlink --project . --keep-files
 - 可选删除 symlink。
 - 可选清理 `.git/info/exclude`。
 - 不删除 private repo 中的真实文件。
-

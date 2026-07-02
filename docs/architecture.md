@@ -33,6 +33,47 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## 语言与入口边界
+
+MVP 的核心实现语言建议使用 TypeScript + Node.js。
+
+原因：
+
+- CLI、文件系统、GitHub auth、文件监听和 JSON 输出生态成熟。
+- VS Code / Cursor extension 后续可以直接复用 TypeScript 类型和部分客户端代码。
+- JetBrains 插件可以通过进程调用 CLI，不需要把同步算法写进 Kotlin 插件。
+- Desktop tray app 可以调用 CLI 或复用同一个 local agent。
+- Web UI 无法直接访问用户本机文件和 Git，必须通过本机 local agent 间接调用 core。
+
+边界原则：
+
+- `local-config-core` 保持 IDE 中立，不依赖 JetBrains SDK、VS Code API、Electron、浏览器 API。
+- Entry Layer 只负责 UI、当前项目路径识别、命令触发、状态展示和错误展示。
+- 跨入口的稳定契约优先使用 CLI + JSON，而不是共享 IDE 内部对象。
+- VS Code extension 可以在进程内复用 TypeScript 包，但用户可见行为仍应以 CLI contract 为准。
+- JetBrains 插件使用 Kotlin 实现 UI，通过 `local-config` CLI 调用 core。
+
+推荐调用形态：
+
+```text
++--------------------+      CLI process / JSON      +---------------------+
+| JetBrains Plugin   | ---------------------------> | local-config CLI    |
+| Kotlin             |                              | TypeScript + Node   |
++--------------------+                              +----------+----------+
+                                                                  |
++--------------------+      import or CLI / JSON                  v
+| VS Code Extension  | ---------------------------> +---------------------+
+| TypeScript         |                              | local-config-core   |
++--------------------+                              +----------+----------+
+                                                                  |
++--------------------+      localhost HTTP / JSON                 v
+| Web UI             | ---------------------------> +---------------------+
+| Browser            |                              | local agent         |
++--------------------+                              +---------------------+
+```
+
+后续如果需要单文件二进制、启动性能或更强的 native 能力，可以在 CLI contract 稳定后评估 Rust/Go native helper。第一版不建议直接用 Rust/Go 重写 core，避免在产品边界尚未稳定时提高迭代成本。
+
 ## 关键模块
 
 ### Entry Layer
@@ -42,13 +83,14 @@
 - 识别当前项目路径。
 - 提供 Setup / Sync / Status 操作入口。
 - 展示同步状态和错误。
-- 调用 CLI/core。
+- 调用 CLI/core，并解析机器可读 JSON 结果。
 
 不负责：
 
 - Git 同步算法。
 - 文件冲突处理策略。
 - 配置映射持久化格式。
+- 直接依赖 private config repo 的内部 Git 实现细节。
 
 ### Project Resolver
 
@@ -101,6 +143,21 @@
 - 检查工作区状态。
 - 执行 debounce 后的自动同步。
 - 在 conflict 风险时停止。
+
+### CLI Contract Adapter
+
+职责：
+
+- 将 core 的强类型结果转换为 CLI JSON 响应。
+- 统一 exit code、stdout、stderr 语义。
+- 为 IDE 插件、desktop app 和 local agent 提供稳定的命令边界。
+
+约束：
+
+- `stdout` 在 `--json` 模式下只输出机器可读 JSON。
+- `stderr` 用于人类可读诊断信息和底层命令错误。
+- 非 0 exit code 表示命令失败，调用方不得仅靠解析错误文本判断失败类型。
+- 公共响应应定义命名模型，避免长期传播匿名 object bag。
 
 ## 同步模式
 
@@ -183,4 +240,3 @@ else:
 - 自动 `git reset --hard`。
 - 自动 force push。
 - 自动覆盖冲突文件。
-
