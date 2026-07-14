@@ -2,13 +2,14 @@
 
 ## 核心判断
 
-GitHub private repo 可以同步非敏感本地配置，但不应默认作为 secret manager。
+Git、local folder、WebDAV 和 S3-compatible storage 可以同步非敏感本地配置，但不应默认作为 secret manager。
 
 原因：
 
-- private repo 仍然是 Git 历史，误提交后很难彻底清理。
-- token、password、private key 一旦进入 Git 历史，需要轮换。
-- 企业合规环境可能禁止密钥进入个人 GitHub。
+- Git 仓库存在长期历史，误提交后很难彻底清理。
+- 云端对象、备份版本和同步盘回收站也可能长期保留已删除内容。
+- token、password、private key 一旦上传到任何远端，需要按泄露处理并轮换。
+- 企业合规环境可能禁止密钥进入个人云端或非公司管理的存储。
 
 ## 默认安全策略
 
@@ -40,15 +41,25 @@ application-production.yml
 
 允许用户显式 override，但需要二次确认。
 
-## GitHub 权限
+## Repository 凭证
 
-第一版优先使用用户本机已有凭证：
+Git Driver 优先使用用户本机已有凭证：
 
 - `gh auth`
 - git credential helper
 - SSH key
 
-不在本工具内保存 GitHub token。
+WebDAV、S3 等 Driver 通过 `credentialRef` 使用 OS keychain、环境变量或 provider SDK 默认凭证链。
+
+Local Config Sync 配置文件不得保存 Git token、WebDAV password、S3 access key 或 secret key。`status --json`、日志和错误响应不得输出凭证内容。
+
+## Repository 发布保护
+
+- Driver push 必须使用 expected remote revision 或等价条件写。
+- 远端 revision 已变化时返回 conflict。
+- 后端不能提供条件写或等价保护时，默认拒绝可能覆盖远端的 push。
+- 同一 Repository 使用独占 lock，避免本机并发同步。
+- `sync --project` 不能发布当前 Mapping scope 以外的 dirty 文件。
 
 ## 业务项目保护
 
@@ -74,20 +85,20 @@ application-production.yml
 - 自动覆盖本地。
 - 自动 force push。
 - 自动 reset。
+- 缺少并发保护时执行覆盖式上传。
 
 允许：
 
 - 展示冲突文件。
-- 打开 private repo 工作区。
-- 给出手工解决命令。
+- 打开 Repository workspace。
+- 给出 Driver-specific 手工解决建议。
 
 ## 后续加密方案
 
 可选增强：
 
-- 使用 age/sops 对 private repo 内容加密。
+- 使用 age/sops 对 Repository 内容加密。
 - 对单个 mapping 开启加密。
 - 通过 1Password / Bitwarden / company secret manager 注入敏感值。
 
-MVP 不实现加密，但架构不能阻止后续加入。
-
+MVP 不实现加密，但架构不能阻止后续加入。Secret provider 是独立扩展点，不作为 Repository Driver 的一种类型。

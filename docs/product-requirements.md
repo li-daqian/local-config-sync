@@ -18,7 +18,8 @@
 
 - 在业务项目内看到并编辑本地配置。
 - 保证本地配置不会进入业务仓库 commit。
-- 将本地配置同步到用户自己的 GitHub private repo。
+- 同时配置多个配置仓库，并将不同项目映射到不同仓库。
+- 支持 Git、local folder 等多种仓库类型，并为 WebDAV、S3-compatible storage 保留扩展边界。
 - 在新电脑上一键恢复。
 - 后续通过 IDE 插件点选完成配置，无需打开额外窗口。
 
@@ -31,12 +32,14 @@
 - 云端配置中心替代。
 - 与业务项目构建系统深度绑定。
 - 自动修复复杂 Git conflict。
+- 第一版内置云盘厂商 OAuth 和仓库选择器。
+- 把 Repository Driver 当作生产 secret manager。
 
 ## 用户故事
 
 ### 初始化本地配置同步
 
-作为开发者，我希望在打开项目后点击一次 Setup，选择 GitHub private repo 和目标目录，工具自动把配置同步到当前项目并设置本地 ignore。
+作为开发者，我希望在打开项目后点击一次 Setup，选择一个已配置的仓库和目标目录，工具自动把配置同步到当前项目并设置本地 ignore。
 
 验收标准：
 
@@ -46,13 +49,13 @@
 
 ### 修改后同步
 
-作为开发者，我希望在项目里直接改配置文件，然后点击 Sync，配置自动提交并 push 到我的 private repo。
+作为开发者，我希望在项目里直接改配置文件，然后点击 Sync，配置安全发布到所选仓库。
 
 验收标准：
 
-- private repo 中出现最新配置。
-- commit message 可读。
-- 如果远端有更新，先 pull/rebase 再 push。
+- 仓库中出现最新配置。
+- Git 仓库的 commit message 可读。
+- 如果远端有更新，先安全拉取；双方同时修改时停止并报告 conflict。
 
 ### 换电脑恢复
 
@@ -60,7 +63,7 @@
 
 验收标准：
 
-- 从 private repo 拉取配置。
+- 从所选仓库拉取配置。
 - 重新创建 copy/symlink。
 - 重新写入 `.git/info/exclude`。
 
@@ -72,15 +75,17 @@
 
 - 工具停止自动同步。
 - 展示冲突文件列表。
-- 提供打开冲突文件或执行手动 Git 命令的入口。
+- 提供打开冲突文件、Repository workspace 或查看 Driver-specific 解决建议的入口。
 
 ## MVP 功能清单
 
 - `init`：初始化用户级配置。
-- `link`：建立一个业务项目目录和 private repo 目录的映射。
-- `pull`：从 private repo 更新本地配置。
-- `push`：将本地配置提交并推送到 private repo。
+- `repository`：添加、查看、诊断和删除仓库实例。
+- `link`：建立业务项目目录和仓库目录的映射。
+- `pull`：从仓库更新本地配置。
+- `push`：将本地配置安全发布到仓库。
 - `sync`：执行 pull + push 的安全组合。
 - `status`：查看映射和同步状态。
-- `doctor`：检查 git、gh、权限、ignore 和 symlink 状态。
+- `doctor`：检查 Repository Driver、凭证、权限、ignore 和 symlink 状态。
 
+第一阶段正式支持 `git` 和 `local-folder` Driver。Git Driver 覆盖所有使用标准 Git URL 的托管服务，不为 GitHub、GitLab、Gitee 分别实现同步算法。

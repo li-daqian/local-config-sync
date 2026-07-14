@@ -14,24 +14,25 @@
 │ local-config-core                                            │
 │                                                             │
 │  Project Resolver                                            │
+│  Repository Registry                                         │
 │  Mapping Manager                                             │
 │  File Linker                                                 │
 │  Ignore Manager                                              │
 │  Sync Orchestrator                                           │
 │  Conflict Detector                                           │
-│  Git Adapter                                                 │
+│  Repository Driver Registry                                  │
 └───────────────┬─────────────────────────────────────────────┘
                 │
                 v
 ┌─────────────────────────────────────────────────────────────┐
-│ Local + Remote State                                         │
+│ Managed Workspace + Repository Drivers                       │
 │                                                             │
-│  Business Project                                            │
-│  .git/info/exclude                                           │
-│  Private Config Repo                                         │
-│  GitHub private repo                                         │
+│  Business Project / .git/info/exclude                        │
+│  Git / Local Folder / WebDAV / S3-compatible storage         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+架构同时支持多个 Repository 实例和多种 Repository 类型。所有后端先同步到 managed local workspace，`File Linker` 只处理 workspace 与业务项目的文件关系。详细 Driver 契约见[多仓库与 Repository Driver 设计](repository-backends.md)。
 
 ## 语言与入口边界
 
@@ -39,7 +40,7 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 
 原因：
 
-- CLI、文件系统、GitHub auth、文件监听和 JSON 输出生态成熟。
+- CLI、文件系统、Git、远端存储 SDK、文件监听和 JSON 输出生态成熟。
 - VS Code / Cursor extension 后续可以直接复用 TypeScript 类型和部分客户端代码。
 - JetBrains 插件可以通过进程调用 CLI，不需要把同步算法写进 Kotlin 插件。
 - Desktop tray app 可以调用 CLI 或复用同一个 local agent。
@@ -87,10 +88,10 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 
 不负责：
 
-- Git 同步算法。
+- Repository Driver 和同步算法。
 - 文件冲突处理策略。
 - 配置映射持久化格式。
-- 直接依赖 private config repo 的内部 Git 实现细节。
+- 直接依赖配置仓库的 Driver 实现细节。
 
 ### Project Resolver
 
@@ -105,10 +106,18 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 
 职责：
 
-- 保存用户配置仓库路径。
-- 保存业务项目和 remote path 的映射。
+- 保存业务项目和 Repository `sourcePath` 的映射。
 - 支持多个业务项目。
-- 支持同一个 private repo 下多个项目目录。
+- 支持多个 Repository 实例，以及同一 Repository 下多个非重叠项目目录。
+
+### Repository Registry
+
+职责：
+
+- 保存 Repository 实例及其命名配置。
+- 根据 `type` 解析和校验 Driver-specific options。
+- 管理每个 Repository 的 workspace、状态和锁路径。
+- 配置文件只保存 `credentialRef`，不保存远端明文凭证。
 
 ### File Linker
 
@@ -127,20 +136,26 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 - 写入前检查是否已有规则。
 - 支持删除映射时清理规则。
 
-### Git Adapter
+### Repository Driver Registry
 
 职责：
 
-- 对 private config repo 执行 `git status`、`pull --rebase`、`add`、`commit`、`push`。
-- 第一版使用系统 git CLI。
-- 不对业务项目执行提交操作。
+- 按 Repository `type` 选择 Git、Local Folder、WebDAV 或 S3 Driver。
+- 通过 `prepare`、`inspect`、`pull`、`push`、`doctor` 统一同步语义。
+- 将 commit SHA、ETag、version ID 等后端状态归一化为 remote revision。
+- 将底层失败映射为公共错误码和 conflict 结果。
+- 第一阶段实现 Git Driver 和 Local Folder Driver。
+
+Git Driver 使用系统 git CLI，不对业务项目执行提交操作。GitHub、GitLab、Gitee 和自建 Git 共用同一个 Driver。
 
 ### Sync Orchestrator
 
 职责：
 
 - 编排 pull/push/sync 流程。
-- 检查工作区状态。
+- 检查 workspace、mapping scope 和 Repository 状态。
+- 获取 Repository-level lock，禁止并发修改同一 workspace。
+- 上传前执行敏感文件检查。
 - 执行 debounce 后的自动同步。
 - 在 conflict 风险时停止。
 
@@ -165,12 +180,12 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 
 ```text
 business-project/config/application-dev.yml
-        -> private-configs/ai-rvis-agent/config/application-dev.yml
+        -> ~/.local-config-sync/workspaces/personal-git/ai-rvis-agent/config/application-dev.yml
 ```
 
 优点：
 
-- 修改业务项目文件即修改 private repo 文件。
+- 修改业务项目文件即修改 Repository workspace 文件。
 - 不需要额外 copy back。
 - 状态简单。
 
@@ -182,8 +197,8 @@ business-project/config/application-dev.yml
 ### Copy 模式
 
 ```text
-private repo file -> business project file
-business project file -> private repo file
+Repository workspace file -> business project file
+business project file -> Repository workspace file
 ```
 
 优点：
@@ -205,38 +220,44 @@ MVP 默认使用 `symlink`，提供 `copy` 作为 fallback。
 ```text
 ~/.local-config-sync/
   config.yml
-  state.json
+  repositories.yml
+  mappings.yml
+  workspaces/<repository-id>/
+  state/repositories/<repository-id>.json
+  locks/<repository-id>.lock
   logs/
 ```
 
-配置仓库建议目录：
+Mapping 中只保存 `repositoryId` 和 workspace 内相对 `sourcePath`，不重复保存 Repository 的真实路径或凭证。
+
+Git Repository 的 managed workspace 示例：
 
 ```text
-~/private-configs/
-  ai-rvis-agent/
-    config/
-      application-dev.yml
+~/.local-config-sync/workspaces/personal-git/
+  ai-rvis-agent/config/application-dev.yml
 ```
 
-## Git 策略
+## 通用同步策略
 
 `sync` 建议流程：
 
 ```text
-validate mapping
-check private repo status
-git pull --rebase --autostash
-copy/link validation
-git add mapped paths
-if staged changes exist:
-  git commit -m "chore(<project>): sync local config"
-  git push
-else:
-  no-op
+validate repository and mapping scope
+acquire repository lock
+inspect local / remote / last-synced baseline
+if conflict risk: stop
+pull through Repository Driver
+copy reconciliation / symlink validation
+scan sensitive files
+push with expected remote revision
+update state and release lock
 ```
 
 禁止：
 
-- 自动 `git reset --hard`。
-- 自动 force push。
+- 缺少条件写或等价保护时静默覆盖远端。
 - 自动覆盖冲突文件。
+- Git Driver 自动执行 `git reset --hard` 或 force push。
+- `sync --project` 提交当前 Mapping scope 以外的 dirty 文件。
+
+发现 scope 外的 dirty 文件时返回 `repository_dirty_outside_scope`。同一个 Repository 正在同步时返回 `repository_locked`。
