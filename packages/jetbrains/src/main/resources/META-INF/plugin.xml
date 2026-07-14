@@ -1,10 +1,34 @@
 <idea-plugin>
     <id>io.github.localconfigsync.jetbrains</id>
     <name>Local Config Sync</name>
-    <vendor>Local Config Sync</vendor>
+    <vendor email="hi@lidaqian.me" url="https://github.com/li-daqian/local-config-sync">Li DaQian</vendor>
     <description><![CDATA[
-        Synchronize project-local overlay configuration using the IDE-neutral Local Config Sync CLI.
+        <p>
+          Keep project-local overlay configuration inside your project for convenient editing,
+          while excluding it from the project's Git history and synchronizing it through a
+          user-configured Git or local-folder repository.
+        </p>
+        <p>The plugin provides:</p>
+        <ul>
+          <li>project setup and repository mapping;</li>
+          <li>safe manual synchronization with conflict detection;</li>
+          <li>Git authentication checks; and</li>
+          <li>sync status in the IDE status bar.</li>
+        </ul>
+        <p>
+          The <code>local-config</code> CLI is required and its executable path can be configured
+          under <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git
+          credentials or synchronize detected secret files by default.
+        </p>
     ]]></description>
+    <change-notes><![CDATA[
+        <p>Initial release.</p>
+        <ul>
+          <li>Set up project-to-repository mappings.</li>
+          <li>Run safe manual synchronization from the IDE.</li>
+          <li>Verify Git authentication and view synchronization status.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
 
@@ -13,7 +37,9 @@
                 id="io.github.localconfigsync.settings"
                 displayName="Local Config Sync"
                 instance="io.github.localconfigsync.jetbrains.settings.LocalConfigConfigurable"/>
-        <statusBarWidgetFactory implementation="io.github.localconfigsync.jetbrains.status.LocalConfigStatusWidgetFactory"/>
+        <statusBarWidgetFactory
+                id="LocalConfigSyncStatus"
+                implementation="io.github.localconfigsync.jetbrains.status.LocalConfigStatusWidgetFactory"/>
         <notificationGroup id="Local Config Sync" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 
