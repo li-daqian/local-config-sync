@@ -1,6 +1,7 @@
 package io.github.localconfigsync.jetbrains.settings
 
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.FormBuilder
@@ -15,12 +16,10 @@ class LocalConfigConfigurable : Configurable {
 
     override fun createComponent(): JComponent {
         cliPath.text = LocalConfigSettings.getInstance().cliPath
-        cliPath.addBrowseFolderListener(
-            "Select Local Config Sync CLI",
-            "Select the local-config executable. IDE processes may not inherit your shell PATH.",
-            null,
-            com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.createSingleFileDescriptor()
-        )
+        val cliDescriptor = FileChooserDescriptorFactory.singleFile()
+            .withTitle("Select Local Config Sync CLI")
+            .withDescription("Select the local-config executable. IDE processes may not inherit your shell PATH.")
+        cliPath.addBrowseFolderListener(null, cliDescriptor)
         panel = FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("CLI executable:"), cliPath, 1, false)
             .addComponent(JBLabel("Install the CLI first, then set its absolute path here if it is not on the IDE PATH."))

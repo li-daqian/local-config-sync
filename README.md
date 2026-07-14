@@ -1,6 +1,6 @@
 # Local Config Sync
 
-> 当前实现版本：`0.1.0`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
+> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.1`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
 
 Local Config Sync 是一个面向开发者的本地配置同步工具。它解决的问题是：
 
@@ -80,7 +80,7 @@ ln -sfn "$(pwd)/packages/cli/dist/cli.js" ~/.local/bin/local-config
 pnpm plugin:build
 ```
 
-安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.0.zip` 后，在 IDE 的 `Settings | Tools | Local Config Sync` 中设置 `local-config` 可执行文件的绝对路径。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.1.zip` 后，在 IDE 的 `Settings | Tools | Local Config Sync` 中设置 `local-config` 可执行文件的绝对路径。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
 开发机已有 IntelliJ 安装时，可以避免重新下载 IDE SDK：
 
@@ -186,6 +186,26 @@ local-config sync --project /path/to/business-project
 ```bash
 pnpm check
 pnpm plugin:build
+pnpm plugin:check
+```
+
+`plugin:check` 是日常本地校验，运行项目配置、插件结构检查并生成 ZIP。开发机已有 IntelliJ 安装时，可避免下载 SDK：
+
+```bash
+packages/jetbrains/gradlew -p packages/jetbrains \
+  -PlocalIdeaPath=/absolute/path/to/idea \
+  verifyPluginProjectConfiguration verifyPluginStructure buildPlugin
+```
+
+完整二进制兼容性矩阵由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行，覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Gradle 依赖并上传 `pluginVerifier` 报告。
+
+如本机已经安装需要验证的目标 IDE，也可以复用该安装目录运行单版本 verifier，不下载额外 SDK：
+
+```bash
+packages/jetbrains/gradlew -p packages/jetbrains \
+  -PlocalIdeaPath=/absolute/path/to/idea \
+  -PlocalVerifierIdePath=/absolute/path/to/idea \
+  verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 ```
 
 测试使用真实 bare Git Repository 覆盖 push、pull、远端与本地并发修改冲突、删除同步、scope lock、敏感文件阻断和 local-folder Driver。

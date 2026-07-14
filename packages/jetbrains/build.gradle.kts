@@ -1,10 +1,13 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+
 plugins {
     kotlin("jvm") version "2.3.20"
     id("org.jetbrains.intellij.platform")
 }
 
 group = "io.github.localconfigsync"
-version = "0.1.0"
+version = "0.1.1"
 
 dependencies {
     intellijPlatform {
@@ -46,11 +49,10 @@ intellijPlatform {
             </p>
         """.trimIndent()
         changeNotes = """
-            <p>Initial release.</p>
+            <p>Compatibility maintenance release.</p>
             <ul>
-              <li>Set up project-to-repository mappings.</li>
-              <li>Run safe manual synchronization from the IDE.</li>
-              <li>Verify Git authentication and view synchronization status.</li>
+              <li>Migrate deprecated dialog, file chooser, and status bar APIs.</li>
+              <li>Preserve setup, authentication, sync, and status behavior.</li>
             </ul>
         """.trimIndent()
         ideaVersion {
@@ -61,6 +63,19 @@ intellijPlatform {
             email = "hi@lidaqian.me"
             url = "https://github.com/li-daqian/local-config-sync"
         }
+    }
+    pluginVerification {
+        ides {
+            val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
+            if (localVerifierIdePath != null) {
+                local(localVerifierIdePath)
+            } else {
+                create(IntelliJPlatformType.IntellijIdea, "2026.1.4")
+                create(IntelliJPlatformType.IntellijIdea, "262.8665.176")
+            }
+        }
+        failureLevel.set(VerifyPluginTask.FailureLevel.ALL)
+        verificationReportsFormats.set(VerifyPluginTask.VerificationReportsFormats.ALL)
     }
     buildSearchableOptions = false
     instrumentCode = false

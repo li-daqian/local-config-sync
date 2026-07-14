@@ -11,7 +11,7 @@ class GitAuthAction : AnAction() {
         val project = event.project ?: return
         val repositoryId = Messages.showInputDialog(project, "Repository ID", "Git Authentication", null) ?: return
         val methods = arrayOf("auto", "ssh", "credential", "gh")
-        val methodIndex = Messages.showChooseDialog(project, "Authentication method", "Git Authentication", null, methods, methods[0])
+        val methodIndex = Messages.showDialog(project, "Authentication method", "Git Authentication", methods, 0, null)
         if (methodIndex < 0) return
         runBackground(project, "Checking Git Authentication") {
             LocalConfigCli.command(project, listOf("repository", "auth", repositoryId.trim(), "--method", methods[methodIndex]))

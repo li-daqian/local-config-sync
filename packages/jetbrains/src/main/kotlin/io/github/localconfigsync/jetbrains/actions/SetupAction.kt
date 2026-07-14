@@ -11,7 +11,7 @@ class SetupAction : AnAction() {
     override fun actionPerformed(event: AnActionEvent) {
         val project = event.project ?: return
         val choices = arrayOf("Use existing repository", "Create Git repository")
-        val choice = Messages.showChooseDialog(project, "Choose a repository setup", "Setup Local Config Sync", null, choices, choices[0])
+        val choice = Messages.showDialog(project, "Choose a repository setup", "Setup Local Config Sync", choices, 0, null)
         if (choice < 0) return
 
         val repositoryId = requiredInput(project, "Repository ID", "Setup Local Config Sync") ?: return
@@ -24,7 +24,7 @@ class SetupAction : AnAction() {
         val sourcePath = requiredInput(project, "Repository source path (for example: my-project/config)", "Setup Local Config Sync") ?: return
         val targetPath = Messages.showInputDialog(project, "Project target path", "Setup Local Config Sync", null, "config", null)?.trim() ?: return
         val modes = arrayOf("symlink", "copy")
-        val modeIndex = Messages.showChooseDialog(project, "Link mode", "Setup Local Config Sync", null, modes, modes[0])
+        val modeIndex = Messages.showDialog(project, "Link mode", "Setup Local Config Sync", modes, 0, null)
         if (modeIndex < 0) return
 
         runBackground(project, "Setting Up Local Config Sync") {

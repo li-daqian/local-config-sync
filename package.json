@@ -10,7 +10,9 @@
     "test": "vitest run",
     "typecheck": "pnpm --filter @local-config-sync/core build && pnpm -r --filter './packages/{core,cli}' typecheck",
     "check": "pnpm typecheck && pnpm test && pnpm build",
-    "plugin:build": "packages/jetbrains/gradlew -p packages/jetbrains buildPlugin"
+    "plugin:build": "packages/jetbrains/gradlew -p packages/jetbrains buildPlugin",
+    "plugin:check": "packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure buildPlugin",
+    "plugin:verify": "packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

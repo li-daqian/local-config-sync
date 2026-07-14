@@ -2,26 +2,35 @@ package io.github.localconfigsync.jetbrains.status
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.CustomStatusBarWidget
 import com.intellij.openapi.wm.StatusBar
-import com.intellij.openapi.wm.StatusBarWidget
-import com.intellij.openapi.wm.WindowManager
-import com.intellij.util.Consumer
+import com.intellij.ui.components.JBLabel
+import com.intellij.util.ui.JBUI
 import io.github.localconfigsync.jetbrains.cli.LocalConfigCli
-import java.awt.Component
+import java.awt.Cursor
 import java.awt.event.MouseEvent
+import java.awt.event.MouseAdapter
+import javax.swing.JComponent
 
-class LocalConfigStatusWidget(private val project: Project) : StatusBarWidget, StatusBarWidget.TextPresentation {
+class LocalConfigStatusWidget(private val project: Project) : CustomStatusBarWidget {
     @Volatile private var state = "Checking"
-    private var statusBar: StatusBar? = null
+    private val component: JBLabel by lazy {
+        JBLabel(statusText()).apply {
+            toolTipText = "Click to refresh Local Config Sync status"
+            border = JBUI.Borders.empty(0, 6)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(event: MouseEvent) = refresh()
+            })
+        }
+    }
 
     override fun ID(): String = ID
-    override fun install(statusBar: StatusBar) { this.statusBar = statusBar; refresh() }
-    override fun dispose() { statusBar = null }
-    override fun getPresentation(): StatusBarWidget.WidgetPresentation = this
-    override fun getText(): String = "Local Config: $state"
-    override fun getAlignment(): Float = Component.CENTER_ALIGNMENT
-    override fun getTooltipText(): String = "Click to refresh Local Config Sync status"
-    override fun getClickConsumer(): Consumer<MouseEvent> = Consumer { refresh() }
+    override fun getComponent(): JComponent = component
+    override fun install(statusBar: StatusBar) = refresh()
+    override fun dispose() = Unit
+
+    private fun statusText(): String = "Local Config: $state"
 
     private fun refresh() {
         if (project.isDisposed || project.basePath == null) return
@@ -32,7 +41,7 @@ class LocalConfigStatusWidget(private val project: Project) : StatusBarWidget, S
                 "Failed"
             }
             ApplicationManager.getApplication().invokeLater {
-                if (!project.isDisposed) WindowManager.getInstance().getStatusBar(project)?.updateWidget(ID)
+                if (!project.isDisposed) component.text = statusText()
             }
         }
     }
