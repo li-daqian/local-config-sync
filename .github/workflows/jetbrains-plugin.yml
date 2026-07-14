@@ -46,6 +46,11 @@ jobs:
       - name: Run plugin verification
         run: packages/jetbrains/gradlew -p packages/jetbrains -PallowIdeSdkDownload=true verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 
+      - name: Summarize plugin verifier reports
+        if: ${{ always() }}
+        shell: bash
+        run: scripts/summarize-plugin-verifier packages/jetbrains/build/reports/pluginVerifier >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload plugin verifier reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v7

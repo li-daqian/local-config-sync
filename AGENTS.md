@@ -68,3 +68,12 @@ Repository Driver / managed workspace / local project / .git/info/exclude
 - `docs/security-model.md`
 - `docs/cli-spec.md`
 - `docs/repository-backends.md`
+
+## GitHub Actions 闭环
+
+- 只读诊断已有 run 不需要额外授权；优先使用 `pnpm ci:status` 读取 GitHub Actions 状态、失败日志和 `plugin-verifier-reports`，不要要求用户手工粘贴日志。
+- 只有用户明确授权 commit 和 push 后，才可以在当前 feature branch 上执行“本地验证 -> commit -> push -> 等待 CI -> 修复”的闭环；不得把这条约定视为默认 push 授权。
+- push 前先运行与改动范围匹配的本地检查。JetBrains 插件日常修改至少运行 `pnpm plugin:check`；CLI/core 修改至少运行 `pnpm check`。
+- push 后运行 `pnpm ci:status`。失败时根据 failed step logs 和 verifier artifact 定位根因，修复并重新验证；默认最多迭代 3 轮。
+- CI 成功但报告中仍有 warning 时也要分类检查。项目代码导致的新 warning 应修复；第三方工具或目标 IDE 自身噪声只报告，不做无关修改，也不通过宽泛 suppress 隐藏。
+- 遇到权限失败、branch conflict、需要 destructive Git 操作或重大方案选择时停止闭环并报告。禁止 force push、`reset --hard`、跳过 required check 或修改 branch protection。

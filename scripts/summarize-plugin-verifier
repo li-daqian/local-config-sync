@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+report_dir=${1:-packages/jetbrains/build/reports/pluginVerifier}
+
+printf '## JetBrains Plugin Verifier\n\n'
+
+if [[ ! -d "$report_dir" ]]; then
+  printf 'No plugin verifier report was generated. Inspect the failed step logs.\n'
+  exit 0
+fi
+
+printf 'Full reports are available in the `plugin-verifier-reports` artifact.\n'
+
+found_report=false
+while IFS= read -r report; do
+  found_report=true
+  printf '\n### `%s`\n\n' "${report#"$report_dir"/}"
+  sed -n '1,240p' "$report"
+done < <(find "$report_dir" -type f -name 'report.md' -print | sort)
+
+if [[ "$found_report" == false ]]; then
+  printf '\nNo Markdown verifier report was found. Verification verdicts:\n\n'
+  while IFS= read -r verdict; do
+    printf -- '- `%s`: ' "${verdict#"$report_dir"/}"
+    sed -n '1,20p' "$verdict"
+  done < <(find "$report_dir" -type f -name 'verification-verdict.txt' -print | sort)
+fi

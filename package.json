@@ -12,7 +12,8 @@
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "plugin:build": "packages/jetbrains/gradlew -p packages/jetbrains buildPlugin",
     "plugin:check": "packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure buildPlugin",
-    "plugin:verify": "packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin"
+    "plugin:verify": "packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin",
+    "ci:status": "scripts/ci-status"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

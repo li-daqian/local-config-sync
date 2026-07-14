@@ -204,6 +204,20 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 完整二进制兼容性矩阵由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行，覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Gradle 依赖并上传 `pluginVerifier` 报告。
 
+已登录 GitHub CLI 后，可以等待当前分支最新一次 JetBrains workflow，并自动读取失败步骤、下载 verifier report 和扫描关键诊断：
+
+```bash
+gh auth status
+pnpm ci:status
+```
+
+脚本默认要求 workflow 的 head SHA 与本地 `HEAD` 一致，避免误把旧 run 当作当前提交的结果。诊断指定 run 或只查看、不等待时可使用：
+
+```bash
+pnpm ci:status -- --run-id <run-id>
+pnpm ci:status -- --no-watch
+```
+
 如本机已经安装需要验证的目标 IDE，也可以复用该安装目录运行单版本 verifier，不下载额外 SDK：
 
 ```bash

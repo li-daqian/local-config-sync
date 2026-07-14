@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+workflow="jetbrains-plugin.yml"
+branch=""
+run_id=""
+output_dir=""
+watch=true
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/ci-status [options]
+
+Wait for and diagnose the latest JetBrains Plugin workflow run for the current branch.
+
+Options:
+  --branch <name>       Select the latest run for this branch (default: current branch)
+  --run-id <id>         Diagnose a specific workflow run
+  --workflow <name>     Workflow file or name (default: jetbrains-plugin.yml)
+  --output-dir <path>   Download artifacts to this directory
+  --no-watch            Do not wait for an in-progress run
+  -h, --help            Show this help
+EOF
+}
+
+fail() {
+  printf 'ci-status: %s\n' "$*" >&2
+  exit 2
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --branch)
+      (($# >= 2)) || fail "--branch requires a value"
+      branch=$2
+      shift 2
+      ;;
+    --run-id)
+      (($# >= 2)) || fail "--run-id requires a value"
+      run_id=$2
+      shift 2
+      ;;
+    --workflow)
+      (($# >= 2)) || fail "--workflow requires a value"
+      workflow=$2
+      shift 2
+      ;;
+    --output-dir)
+      (($# >= 2)) || fail "--output-dir requires a value"
+      output_dir=$2
+      shift 2
+      ;;
+    --no-watch)
+      watch=false
+      shift
+      ;;
+    --)
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown option: $1"
+      ;;
+  esac
+done
+
+command -v git >/dev/null 2>&1 || fail "git is required"
+command -v gh >/dev/null 2>&1 || fail "GitHub CLI (gh) is required"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "run this command inside a Git worktree"
+gh auth status >/dev/null 2>&1 || fail "GitHub CLI is not authenticated; run 'gh auth login -h github.com'"
+
+local_sha=$(git rev-parse HEAD) || fail "cannot resolve local HEAD"
+
+if [[ -z "$run_id" ]]; then
+  if [[ -z "$branch" ]]; then
+    branch=$(git branch --show-current) || fail "cannot resolve current branch"
+    [[ -n "$branch" ]] || fail "detached HEAD; provide --branch or --run-id"
+  fi
+
+  run_id=$(
+    gh run list \
+      --workflow "$workflow" \
+      --branch "$branch" \
+      --limit 1 \
+      --json databaseId \
+      --jq '.[0].databaseId // empty'
+  ) || fail "cannot list workflow runs"
+  [[ -n "$run_id" ]] || fail "no '$workflow' run found for branch '$branch'"
+
+  run_sha=$(gh run view "$run_id" --json headSha --jq '.headSha') || fail "cannot read workflow run $run_id"
+  if [[ "$run_sha" != "$local_sha" ]]; then
+    fail "latest run $run_id is for $run_sha, but local HEAD is $local_sha; push the current commit or pass --run-id explicitly"
+  fi
+fi
+
+status=$(gh run view "$run_id" --json status --jq '.status') || fail "cannot read workflow run $run_id"
+
+if [[ "$status" != "completed" && "$watch" == true ]]; then
+  printf 'Waiting for workflow run %s...\n' "$run_id"
+  gh run watch "$run_id" --exit-status || true
+elif [[ "$status" != "completed" ]]; then
+  printf 'Workflow run %s is still %s; continuing because --no-watch was provided.\n' "$run_id" "$status"
+fi
+
+printf '\nWorkflow summary\n'
+gh run view "$run_id" || fail "cannot display workflow run $run_id"
+
+status=$(gh run view "$run_id" --json status --jq '.status') || fail "cannot refresh workflow run $run_id"
+conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion // empty') || fail "cannot read workflow conclusion"
+
+if [[ "$status" == "completed" && "$conclusion" != "success" ]]; then
+  printf '\nFailed step logs\n'
+  gh run view "$run_id" --log-failed || printf 'ci-status: failed logs are unavailable for run %s\n' "$run_id" >&2
+fi
+
+if [[ -z "$output_dir" ]]; then
+  artifact_root="${TMPDIR:-/tmp}/local-config-sync-ci"
+  mkdir -p "$artifact_root" || fail "cannot create artifact root: $artifact_root"
+  output_dir=$(mktemp -d "$artifact_root/$run_id.XXXXXX") || fail "cannot create artifact directory"
+fi
+mkdir -p "$output_dir" || fail "cannot create artifact directory: $output_dir"
+
+printf '\nDownloading plugin-verifier-reports to %s\n' "$output_dir"
+if gh run download "$run_id" --name plugin-verifier-reports --dir "$output_dir"; then
+  printf '\n'
+  "$script_dir/summarize-plugin-verifier" "$output_dir"
+else
+  printf 'ci-status: plugin-verifier-reports artifact is unavailable; rely on the workflow logs above.\n' >&2
+fi
+
+if [[ "$status" != "completed" ]]; then
+  exit 3
+fi
+
+if [[ "$conclusion" != "success" ]]; then
+  exit 1
+fi
+
+printf '\nWorkflow run %s completed successfully.\n' "$run_id"
