@@ -1,0 +1,19 @@
+{
+  "name": "@local-config-sync/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "local-config": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/make-executable.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@local-config-sync/core": "workspace:*",
+    "commander": "^14.0.0"
+  }
+}

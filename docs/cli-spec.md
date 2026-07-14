@@ -8,6 +8,7 @@ local-config repository add <type>
 local-config repository list
 local-config repository show <id>
 local-config repository doctor <id>
+local-config repository auth [<id>] [--url <url>]
 local-config repository remove <id>
 local-config link
 local-config pull
@@ -141,6 +142,30 @@ local-config repository doctor personal-git --json
 ```
 
 检查 Driver 所需工具、路径、凭证、远端连接、读写权限和安全同步能力。
+
+### auth
+
+验证或配置 Git authentication，不保存 token、password 或 SSH private key：
+
+```bash
+local-config repository auth personal-git --method auto
+local-config repository auth personal-git --method ssh
+local-config repository auth personal-git --method credential
+local-config repository auth personal-git --method gh
+
+# 首次注册前按 URL 配置/验证
+local-config repository auth \
+  --url https://github.com/user/private-configs.git \
+  --method gh
+```
+
+语义：
+
+- `ssh` 验证 SSH URL，并复用 `ssh-agent` / 用户 SSH key。
+- `credential` 验证 HTTP(S) URL，并复用 Git credential helper。
+- `gh` 要求用户先在交互终端完成 `gh auth login`，随后执行 `gh auth setup-git` 并验证远端。
+- `auto` 对 GitHub HTTPS 优先复用已登录的 `gh`，其他情况直接验证系统 Git 已有认证链。
+- CLI 禁用 Git 的隐式交互提示，避免 IDE background task 无限等待。
 
 ### remove
 

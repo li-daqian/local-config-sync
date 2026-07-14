@@ -1,5 +1,7 @@
 # Local Config Sync
 
+> 当前实现版本：`0.1.0`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
+
 Local Config Sync 是一个面向开发者的本地配置同步工具。它解决的问题是：
 
 > 我希望把某个项目的本地配置文件放在项目目录中使用，方便维护和 IDE 自动识别；但这些文件不能提交到业务仓库。同时，我换电脑后还希望这些本地配置可以自动恢复。
@@ -36,6 +38,57 @@ JetBrains Plugin -> VS Code Extension -> Cursor Extension -> CLI
 
 底层同步能力不重写。
 
+## 当前代码结构
+
+```text
+packages/
+  core/       TypeScript：领域模型、Repository Driver、mapping、sync、安全策略
+  cli/        TypeScript：命令行与稳定 JSON contract
+  jetbrains/  Kotlin：Settings、Setup/Auth/Sync action、status widget
+tests/        core 与真实 Git 端到端测试
+```
+
+JetBrains 插件不直接操作 Git 或配置文件，只调用 `local-config ... --json`。
+
+## 构建与安装
+
+要求：
+
+- Node.js 20+
+- pnpm 10+
+- 系统 `git` CLI
+- 构建插件时需要 JDK 21；Gradle Wrapper 会自动下载 Gradle 9
+
+构建 CLI：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+pnpm local-config -- --help
+```
+
+开发环境中可把 CLI 链接到用户 PATH：
+
+```bash
+mkdir -p ~/.local/bin
+ln -sfn "$(pwd)/packages/cli/dist/cli.js" ~/.local/bin/local-config
+```
+
+构建 JetBrains 插件：
+
+```bash
+pnpm plugin:build
+```
+
+安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.0.zip` 后，在 IDE 的 `Settings | Tools | Local Config Sync` 中设置 `local-config` 可执行文件的绝对路径。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+
+开发机已有 IntelliJ 安装时，可以避免重新下载 IDE SDK：
+
+```bash
+packages/jetbrains/gradlew -p packages/jetbrains \
+  -PlocalIdeaPath=/absolute/path/to/idea buildPlugin
+```
+
 ## 典型使用流程
 
 1. 用户在 IDE 中打开业务项目。
@@ -62,6 +115,61 @@ local-config status
 local-config doctor
 ```
 
+当前命令均已实现；机器调用使用 `--json`，失败同时返回稳定 error code 与非 0 exit code。
+
+## Git authentication
+
+Local Config Sync 不保存 Git token、password 或 SSH private key。Git Driver 复用系统 Git 已有认证能力：
+
+```bash
+# SSH URL：复用 ssh-agent / SSH key
+local-config repository auth personal --method ssh
+
+# HTTPS URL：复用 git credential helper
+local-config repository auth personal --method credential
+
+# GitHub CLI：验证 gh auth，并执行 gh auth setup-git
+local-config repository auth personal --method gh
+
+# 自动检测并验证远端（默认）
+local-config repository auth personal --method auto
+
+# Repository 尚未注册时，先为 URL 配置/验证认证
+local-config repository auth --url https://github.com/user/private-configs.git --method gh
+```
+
+如果需要交互登录，请先在终端运行 `gh auth login`，或配置系统 credential helper / SSH key。CLI 子进程禁用 Git 的隐式密码提示，避免 IDE background task 卡住。
+
+## 第一版完整流程
+
+```bash
+local-config init
+
+local-config repository add git \
+  --id personal \
+  --url git@github.com:user/private-configs.git \
+  --branch main
+
+local-config repository auth personal --method auto
+
+local-config link \
+  --project /path/to/business-project \
+  --repository personal \
+  --source-path business-project/config \
+  --target config \
+  --mode symlink
+
+local-config status --project /path/to/business-project
+local-config sync --project /path/to/business-project
+```
+
+插件对应提供：
+
+- `Setup Local Config Sync`：创建 Git Repository 或使用已有 Repository，并建立 mapping。
+- `Authenticate Local Config Git Repository`：验证 `auto` / SSH / credential helper / `gh`。
+- `Sync Local Config Now`：background task 中执行安全 sync。
+- Status Bar Widget：显示 `Synced` / `Pending` / `Conflict` / `Failed` 等 CLI 状态。
+
 ## 安全默认值
 
 - 默认不修改业务项目 `.gitignore`。
@@ -70,6 +178,17 @@ local-config doctor
 - 默认不同步 `.env`、private key、token 文件，除非用户显式允许。
 - 冲突时停止自动同步，不自动覆盖。
 - 远端凭证只保存引用，不写入 Local Config Sync 配置文件。
+
+额外保护：Repository-level lock 阻止本机并发同步；Git push 以 last-synced revision 为条件，远端变化时停止；`--project` 不会提交其他 mapping scope 的 dirty 文件；禁止 force push、`reset --hard` 和自动覆盖冲突。
+
+## 验证
+
+```bash
+pnpm check
+pnpm plugin:build
+```
+
+测试使用真实 bare Git Repository 覆盖 push、pull、远端与本地并发修改冲突、删除同步、scope lock、敏感文件阻断和 local-folder Driver。
 
 ## 文档索引
 

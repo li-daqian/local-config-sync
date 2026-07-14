@@ -11,6 +11,7 @@ JetBrains 插件只是入口层，不承载核心同步逻辑。
 - 调用 `local-config` CLI。
 - 展示状态和错误。
 - 提供 `Sync Now` 操作。
+- 提供 Git authentication 验证入口，调用 CLI 的 `repository auth`。
 
 不做：
 

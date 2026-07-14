@@ -1,10 +1,13 @@
 node_modules/
 dist/
 coverage/
+.gradle/
+.intellijPlatform/
+packages/jetbrains/build/
+packages/jetbrains/.gradle/
 .env
 .env.*
 !.env.example
 .DS_Store
 *.log
 tmp/
-

@@ -1,0 +1,41 @@
+<idea-plugin>
+    <id>io.github.localconfigsync.jetbrains</id>
+    <name>Local Config Sync</name>
+    <vendor>Local Config Sync</vendor>
+    <description><![CDATA[
+        Synchronize project-local overlay configuration using the IDE-neutral Local Config Sync CLI.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable
+                id="io.github.localconfigsync.settings"
+                displayName="Local Config Sync"
+                instance="io.github.localconfigsync.jetbrains.settings.LocalConfigConfigurable"/>
+        <statusBarWidgetFactory implementation="io.github.localconfigsync.jetbrains.status.LocalConfigStatusWidgetFactory"/>
+        <notificationGroup id="Local Config Sync" displayType="BALLOON" isLogByDefault="true"/>
+    </extensions>
+
+    <actions>
+        <action id="LocalConfigSync.Setup"
+                class="io.github.localconfigsync.jetbrains.actions.SetupAction"
+                text="Setup Local Config Sync"
+                description="Create a mapping for the current project">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="LocalConfigSync.Sync"
+                class="io.github.localconfigsync.jetbrains.actions.SyncAction"
+                text="Sync Local Config Now"
+                description="Safely pull and push local configuration">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="LocalConfigSync.Auth"
+                class="io.github.localconfigsync.jetbrains.actions.GitAuthAction"
+                text="Authenticate Local Config Git Repository"
+                description="Verify SSH, credential helper, or GitHub CLI authentication">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
