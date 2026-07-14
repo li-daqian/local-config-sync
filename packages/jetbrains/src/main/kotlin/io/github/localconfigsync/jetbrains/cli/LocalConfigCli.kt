@@ -4,7 +4,6 @@ import com.google.gson.Gson
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.openapi.project.Project
-import io.github.localconfigsync.jetbrains.settings.LocalConfigSettings
 import java.nio.charset.StandardCharsets
 
 class CliException(val code: String, override val message: String, val diagnostics: String = "") : RuntimeException(message)
@@ -14,9 +13,10 @@ object LocalConfigCli {
 
     fun <T> execute(project: Project?, args: List<String>, responseType: Class<T>): T {
         val projectPath = project?.basePath
+        val invocation = CliCommandResolver.resolve()
         val commandLine = GeneralCommandLine()
-            .withExePath(LocalConfigSettings.getInstance().cliPath)
-            .withParameters(args + "--json")
+            .withExePath(invocation.executable)
+            .withParameters(invocation.prefixArguments + args + "--json")
             .withCharset(StandardCharsets.UTF_8)
         if (projectPath != null) commandLine.withWorkDirectory(projectPath)
 

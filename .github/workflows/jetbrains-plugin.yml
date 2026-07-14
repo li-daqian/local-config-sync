@@ -6,12 +6,20 @@ on:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
       - "packages/jetbrains/**"
+      - "packages/core/**"
+      - "packages/cli/**"
+      - "scripts/bundle-cli.mjs"
       - "package.json"
+      - "pnpm-lock.yaml"
   pull_request:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
       - "packages/jetbrains/**"
+      - "packages/core/**"
+      - "packages/cli/**"
+      - "scripts/bundle-cli.mjs"
       - "package.json"
+      - "pnpm-lock.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -33,6 +41,18 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Set up Java
         uses: actions/setup-java@v5

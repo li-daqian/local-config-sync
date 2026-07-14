@@ -1,6 +1,6 @@
 # Local Config Sync
 
-> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.1`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
+> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.2`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
 
 Local Config Sync 是一个面向开发者的本地配置同步工具。它解决的问题是：
 
@@ -81,7 +81,9 @@ packages/jetbrains/gradlew -p packages/jetbrains \
   -PlocalIdeaPath=/absolute/path/to/idea buildPlugin
 ```
 
-安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.1.zip` 后，在 IDE 的 `Settings | Tools | Local Config Sync` 中设置 `local-config` 可执行文件的绝对路径。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.2.zip` 后即可使用。插件内置兼容的 CLI bundle，并自动检测系统、nvm、Volta、asdf 和 mise 中的 Node.js 20+；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI / Node.js 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+
+插件右侧 `Local Config Sync` Tool Window 集中展示项目状态、Repository、Mapping 和错误诊断，并提供 Setup、Sync、Git Auth 和 Refresh。点击底部状态栏的 `Local Config: ...` 会直接打开该面板。
 
 本地构建默认禁止自动下载 IntelliJ SDK，避免意外下载数 GB 文件。必须通过
 `-PlocalIdeaPath` 使用已有 IDE；确实需要下载时，显式传入

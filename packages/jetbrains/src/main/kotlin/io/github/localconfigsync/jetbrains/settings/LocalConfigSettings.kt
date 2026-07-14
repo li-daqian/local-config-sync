@@ -9,16 +9,28 @@ import com.intellij.openapi.components.Storage
 @Service(Service.Level.APP)
 @State(name = "LocalConfigSyncSettings", storages = [Storage("localConfigSync.xml")])
 class LocalConfigSettings : PersistentStateComponent<LocalConfigSettings.State> {
-    data class State(var cliPath: String = "local-config")
+    data class State(
+        var cliPath: String = "",
+        var nodePath: String = "",
+    )
 
     private var state = State()
 
     override fun getState(): State = state
-    override fun loadState(state: State) { this.state = state }
+    override fun loadState(state: State) {
+        // 0.1.1 used "local-config" as a mandatory PATH lookup. Treat that default as
+        // automatic mode so upgrades immediately benefit from the bundled CLI.
+        if (state.cliPath == "local-config") state.cliPath = ""
+        this.state = state
+    }
 
     var cliPath: String
         get() = state.cliPath
-        set(value) { state.cliPath = value.trim().ifBlank { "local-config" } }
+        set(value) { state.cliPath = value.trim() }
+
+    var nodePath: String
+        get() = state.nodePath
+        set(value) { state.nodePath = value.trim() }
 
     companion object {
         fun getInstance(): LocalConfigSettings = ApplicationManager.getApplication().getService(LocalConfigSettings::class.java)

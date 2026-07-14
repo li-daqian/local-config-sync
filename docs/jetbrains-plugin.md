@@ -12,6 +12,7 @@ JetBrains 插件只是入口层，不承载核心同步逻辑。
 - 展示状态和错误。
 - 提供 `Sync Now` 操作。
 - 提供 Git authentication 验证入口，调用 CLI 的 `repository auth`。
+- 通过右侧 Tool Window 集中展示状态、Mapping、Repository、操作入口和错误诊断。
 
 不做：
 
@@ -59,7 +60,7 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 约束：
 
 - 插件优先调用 `local-config` 可执行文件，不直接调用 `node dist/cli.js`。
-- CLI 路径必须允许用户在 Settings 中配置，不能假设 IDE 进程继承了用户 shell 的 `PATH`。
+- 插件发行包内置兼容的 CLI bundle，自动检测 Node.js 20+；CLI 和 Node.js 路径允许用户在 Settings 中高级覆盖。
 - `sync`、`pull`、`push` 必须在 background task 中执行，不能阻塞 UI 线程。
 - `stdout` 在 `--json` 模式下只按 JSON 解析。
 - `stderr` 仅作为诊断信息展示或写入日志。
@@ -69,10 +70,10 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 
 建议入口：
 
-- Status Bar Widget：显示 `Synced` / `Pending` / `Failed` / `Conflict`。
-- Settings Page：配置 CLI 路径、默认 Repository 和 sync 策略。
+- Status Bar Widget：显示 `Synced` / `Pending` / `Failed` / `Conflict`，点击后打开 Tool Window。
+- Settings Page：提供自定义 CLI / Node.js 路径等高级 override。
 - Project Context Action：右键项目目录，`Setup Local Config Sync`。
-- Tool Window：MVP 可不做，避免重 UI。
+- Tool Window：作为插件主界面，展示当前项目、Repository、Mapping、last sync 和真实错误诊断，并提供 Refresh / Setup / Sync / Git Auth。
 
 ## Setup Wizard
 

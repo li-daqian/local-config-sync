@@ -16,9 +16,10 @@
           <li>sync status in the IDE status bar.</li>
         </ul>
         <p>
-          The <code>local-config</code> CLI is required and its executable path can be configured
-          under <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git
-          credentials or synchronize detected secret files by default.
+          The plugin includes a compatible CLI bundle and detects common Node.js 20+
+          installations automatically. Advanced executable overrides are available under
+          <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git credentials
+          or synchronize detected secret files by default.
         </p>
     ]]></description>
     <change-notes><![CDATA[
@@ -34,9 +35,15 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationConfigurable
+                parentId="tools"
                 id="io.github.localconfigsync.settings"
                 displayName="Local Config Sync"
                 instance="io.github.localconfigsync.jetbrains.settings.LocalConfigConfigurable"/>
+        <toolWindow
+                id="Local Config Sync"
+                anchor="right"
+                icon="/icons/localConfigSync.svg"
+                factoryClass="io.github.localconfigsync.jetbrains.toolwindow.LocalConfigToolWindowFactory"/>
         <statusBarWidgetFactory
                 id="LocalConfigSyncStatus"
                 implementation="io.github.localconfigsync.jetbrains.status.LocalConfigStatusWidgetFactory"/>

@@ -1,6 +1,7 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
+import org.gradle.api.tasks.Exec
 
 plugins {
     kotlin("jvm") version "2.3.20"
@@ -8,7 +9,7 @@ plugins {
 }
 
 group = "io.github.localconfigsync"
-version = "0.1.1"
+version = "0.1.2"
 
 val localIdeaPath = providers.gradleProperty("localIdeaPath").orNull
 val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
@@ -58,16 +59,19 @@ intellijPlatform {
               <li>sync status in the IDE status bar.</li>
             </ul>
             <p>
-              The <code>local-config</code> CLI is required and its executable path can be configured
-              under <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git
-              credentials or synchronize detected secret files by default.
+              The plugin includes a compatible CLI bundle and detects common Node.js 20+
+              installations automatically. Advanced executable overrides are available under
+              <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git credentials
+              or synchronize detected secret files by default.
             </p>
         """.trimIndent()
         changeNotes = """
-            <p>Compatibility maintenance release.</p>
+            <p>Integrated tool window and bundled CLI release.</p>
             <ul>
-              <li>Migrate deprecated dialog, file chooser, and status bar APIs.</li>
-              <li>Preserve setup, authentication, sync, and status behavior.</li>
+              <li>Add a right-side project dashboard with setup, sync, authentication, and diagnostics.</li>
+              <li>Open the dashboard from the status bar and preserve actionable CLI errors.</li>
+              <li>Bundle the CLI and automatically detect Node.js 20+.</li>
+              <li>Place advanced executable overrides under Settings | Tools.</li>
             </ul>
         """.trimIndent()
         ideaVersion {
@@ -97,6 +101,27 @@ intellijPlatform {
 }
 
 tasks {
+    val bundleCli by registering(Exec::class) {
+        val repositoryRoot = projectDir.resolve("../..").canonicalFile
+        workingDir(repositoryRoot)
+        commandLine("pnpm", "bundle:cli")
+        inputs.files(
+            repositoryRoot.resolve("package.json"),
+            repositoryRoot.resolve("pnpm-lock.yaml"),
+            repositoryRoot.resolve("scripts/bundle-cli.mjs"),
+            fileTree(repositoryRoot.resolve("packages/core/src")),
+            fileTree(repositoryRoot.resolve("packages/cli/src")),
+        )
+        outputs.file(layout.buildDirectory.file("generated-resources/cli/local-config.mjs"))
+    }
+
+    processResources {
+        dependsOn(bundleCli)
+        from(layout.buildDirectory.file("generated-resources/cli/local-config.mjs")) {
+            into("cli")
+        }
+    }
+
     wrapper {
         gradleVersion = "9.0.0"
         distributionType = Wrapper.DistributionType.BIN
