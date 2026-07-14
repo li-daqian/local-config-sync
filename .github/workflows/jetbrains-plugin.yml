@@ -44,7 +44,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run plugin verification
-        run: packages/jetbrains/gradlew -p packages/jetbrains verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
+        run: packages/jetbrains/gradlew -p packages/jetbrains -PallowIdeSdkDownload=true verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 
       - name: Upload plugin verifier reports
         if: ${{ always() }}

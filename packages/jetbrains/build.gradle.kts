@@ -1,5 +1,6 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 plugins {
     kotlin("jvm") version "2.3.20"
@@ -9,19 +10,33 @@ plugins {
 group = "io.github.localconfigsync"
 version = "0.1.1"
 
+val localIdeaPath = providers.gradleProperty("localIdeaPath").orNull
+val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
+val allowIdeSdkDownload = providers.gradleProperty("allowIdeSdkDownload")
+    .map { it.toBooleanStrict() }
+    .orElse(false)
+
 dependencies {
     intellijPlatform {
-        val localIdeaPath = providers.gradleProperty("localIdeaPath").orNull
         if (localIdeaPath != null) {
             local(localIdeaPath)
-        } else {
+        } else if (allowIdeSdkDownload.get()) {
             intellijIdea("2026.1.4")
+        } else {
+            throw GradleException(
+                "IntelliJ SDK auto-download is disabled. Provide -PlocalIdeaPath=/path/to/idea, " +
+                    "or explicitly opt in with -PallowIdeSdkDownload=true.",
+            )
         }
     }
 }
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        // Compatibility bridges can reintroduce deprecated IntelliJ interface methods into the plugin bytecode.
+        jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY)
+    }
 }
 
 intellijPlatform {
@@ -66,10 +81,10 @@ intellijPlatform {
     }
     pluginVerification {
         ides {
-            val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
-            if (localVerifierIdePath != null) {
-                local(localVerifierIdePath)
-            } else {
+            val verifierIdePath = localVerifierIdePath ?: localIdeaPath
+            if (verifierIdePath != null) {
+                local(verifierIdePath)
+            } else if (allowIdeSdkDownload.get()) {
                 create(IntelliJPlatformType.IntellijIdea, "2026.1.4")
                 create(IntelliJPlatformType.IntellijIdea, "262.8665.176")
             }

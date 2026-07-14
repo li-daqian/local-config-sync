@@ -77,12 +77,17 @@ ln -sfn "$(pwd)/packages/cli/dist/cli.js" ~/.local/bin/local-config
 构建 JetBrains 插件：
 
 ```bash
-pnpm plugin:build
+packages/jetbrains/gradlew -p packages/jetbrains \
+  -PlocalIdeaPath=/absolute/path/to/idea buildPlugin
 ```
 
 安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.1.zip` 后，在 IDE 的 `Settings | Tools | Local Config Sync` 中设置 `local-config` 可执行文件的绝对路径。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
-开发机已有 IntelliJ 安装时，可以避免重新下载 IDE SDK：
+本地构建默认禁止自动下载 IntelliJ SDK，避免意外下载数 GB 文件。必须通过
+`-PlocalIdeaPath` 使用已有 IDE；确实需要下载时，显式传入
+`-PallowIdeSdkDownload=true`。GitHub Actions 已显式启用下载，用于执行完整兼容性矩阵。
+
+开发机已有 IntelliJ 安装时的完整命令：
 
 ```bash
 packages/jetbrains/gradlew -p packages/jetbrains \
@@ -204,9 +209,11 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 ```bash
 packages/jetbrains/gradlew -p packages/jetbrains \
   -PlocalIdeaPath=/absolute/path/to/idea \
-  -PlocalVerifierIdePath=/absolute/path/to/idea \
   verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 ```
+
+默认也会使用 `localIdeaPath` 执行 verifier；需要用另一个本地 IDE 验证时，再传入
+`-PlocalVerifierIdePath=/absolute/path/to/verifier-idea`。
 
 测试使用真实 bare Git Repository 覆盖 push、pull、远端与本地并发修改冲突、删除同步、scope lock、敏感文件阻断和 local-folder Driver。
 
