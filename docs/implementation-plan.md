@@ -8,40 +8,32 @@
 - 明确语言、包结构、测试入口。
 - 明确跨 IDE / desktop / web 的调用边界。
 
-候选技术：
-
-- TypeScript + Node.js：适合写 CLI，也适合被 JetBrains 插件通过进程调用。
-- Rust：二进制部署体验好，但插件集成和快速迭代成本更高。
-- Kotlin：和 JetBrains 插件生态一致，但跨 IDE 复用不如 CLI 简洁。
-- Go：单二进制部署体验好，但与 VS Code / Web / Electron 生态复用不如 TypeScript。
-
-建议 MVP 使用 TypeScript + Node.js。
+最终选择 Go native core/CLI。早期 TypeScript MVP 用于稳定产品边界和 CLI contract；在 JetBrains 插件发行阶段迁移到 Go，消除用户侧 Node.js runtime 要求。
 
 原因：
 
-- Git、文件系统、远端存储 SDK、文件监听和 CLI 生态成熟。
-- 后续 VS Code extension 复用方便。
-- JetBrains 插件可直接调用打包后的 CLI。
-- Desktop tray app 可以调用 CLI 或 local agent。
-- Web UI 必须通过本机 local agent 访问文件系统和 Repository Driver，TypeScript core 可以继续复用。
+- Go 可以构建无 CGO 的 Linux、macOS、Windows amd64/arm64 单文件 binary。
+- 所有入口继续复用稳定 CLI + JSON contract，不依赖某个 IDE 的语言生态。
+- JetBrains 插件可以内置六个平台 binary，运行时无需额外 runtime。
+- Desktop、VS Code / Cursor 和未来 local agent 继续调用同一行为源。
 
 阶段性取舍：
 
 - 第一版不追求单一语言覆盖所有入口，而是追求一个稳定 core 行为源。
 - Kotlin 只用于 JetBrains 插件入口层，不承载同步逻辑。
-- Rust/Go 可作为未来 native helper 或重写 CLI 的候选，但必须等 CLI JSON contract 稳定后再评估。
+- core 与 CLI 一起迁移，不增加只承载部分逻辑的 native helper，避免双实现。
 - 公共命令输出必须有命名响应模型，不使用长期传播的匿名 object bag。
 
 建议包结构：
 
 ```text
+cmd/local-config/ # Go CLI 和 JSON contract adapter
+internal/core/    # Go 同步、Repository Driver、映射、ignore、冲突检测
 packages/
-  core/        # TypeScript，同步、Repository Driver、映射、ignore、冲突检测
-  cli/         # TypeScript，命令行入口和 JSON contract
-  vscode/      # TypeScript，VS Code extension，调用 CLI 或复用 client
-  jetbrains/   # Kotlin，JetBrains UI，调用 CLI
-  desktop/     # Electron/Tauri UI，调用 CLI 或 local agent
-  local-agent/ # 可选，本机 HTTP/IPC 服务，供 Web UI / desktop 调用
+  vscode/        # 可选，调用 native CLI
+  jetbrains/     # Kotlin，内置并调用 native CLI
+  desktop/       # 调用 CLI 或 local agent
+  local-agent/   # 可选，本机 HTTP/IPC 服务，复用 Go core
 ```
 
 ## Phase 1: CLI MVP
@@ -49,29 +41,20 @@ packages/
 核心文件建议：
 
 ```text
-src/
-  cli.ts
-  core/
-    project-resolver.ts
-    repository-registry.ts
-    mapping-manager.ts
-    file-linker.ts
-    ignore-manager.ts
-    sync-orchestrator.ts
-    conflict-detector.ts
-    repository-driver.ts
-    drivers/
-      git-driver.ts
-      local-folder-driver.ts
-  model/
-    config.ts
-    repository.ts
-    mapping.ts
-    command-result.ts
-    status.ts
-  util/
-    fs.ts
-    process.ts
+cmd/local-config/main.go
+internal/core/
+  service.go
+  model.go
+  repositories.go
+  driver.go
+  git-driver.go
+  local-folder-driver.go
+  mappings.go
+  linker.go
+  ignore.go
+  storage.go
+  files.go
+  process.go
 ```
 
 命令：
@@ -189,7 +172,7 @@ local-config doctor
 
 入口策略：
 
-- VS Code / Cursor extension：优先复用 TypeScript client 或调用 CLI，但用户可见行为要与 CLI 一致。
+- VS Code / Cursor extension：调用 native CLI，用户可见行为与其他入口保持一致。
 - Desktop tray app：调用 CLI 或启动 local agent，避免复制同步算法。
 - Web UI：只访问本机 local agent，不直接访问文件系统或配置仓库。
 - local agent：作为 CLI contract 的服务化封装，不引入新的业务规则来源。

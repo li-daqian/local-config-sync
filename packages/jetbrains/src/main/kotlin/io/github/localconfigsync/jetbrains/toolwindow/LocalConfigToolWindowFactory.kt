@@ -99,7 +99,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
                 content.add(section("Unable to load status", listOf(
                     "Error: ${snapshot.error.code}",
                     snapshot.error.message,
-                    snapshot.error.diagnostics.ifBlank { "Use Settings only if automatic CLI or Node.js detection needs an override." },
+                    snapshot.error.diagnostics.ifBlank { "Use Settings only if the bundled CLI needs an advanced override." },
                 ), error = true))
                 content.add(message("The status bar now opens this panel so failures remain visible and actionable."))
             }

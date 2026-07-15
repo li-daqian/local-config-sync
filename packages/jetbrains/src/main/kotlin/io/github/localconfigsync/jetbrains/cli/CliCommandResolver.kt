@@ -2,41 +2,54 @@ package io.github.localconfigsync.jetbrains.cli
 
 import com.intellij.openapi.application.PathManager
 import io.github.localconfigsync.jetbrains.settings.LocalConfigSettings
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
 
 internal data class CliInvocation(
     val executable: String,
-    val prefixArguments: List<String> = emptyList(),
 )
 
-internal object CliCommandResolver {
-    private val validatedNodes = ConcurrentHashMap.newKeySet<String>()
+internal data class CliPlatform(val os: String, val arch: String, val executableName: String) {
+    val resourcePath: String = "/cli/$os-$arch/$executableName"
+}
 
+internal object CliCommandResolver {
     fun resolve(): CliInvocation {
         val settings = LocalConfigSettings.getInstance()
         if (settings.cliPath.isNotBlank()) return CliInvocation(settings.cliPath)
-
-        val node = settings.nodePath.takeIf(String::isNotBlank) ?: findNodeExecutable()
-        ?: throw CliException(
-            "node_unavailable",
-            "The bundled Local Config Sync CLI requires Node.js 20 or newer.",
-            "Install Node.js, or configure its executable under Settings | Tools | Local Config Sync.",
-        )
-        validateNode(node)
-        return CliInvocation(node, listOf(extractBundledCli().toString()))
+        return CliInvocation(extractBundledCli(resolvePlatform()).toString())
     }
 
-    private fun extractBundledCli(): Path {
-        val bytes = CliCommandResolver::class.java.getResourceAsStream("/cli/local-config.mjs")?.use { it.readBytes() }
-            ?: throw CliException("bundled_cli_missing", "The plugin package does not contain the bundled CLI.")
+    internal fun resolvePlatform(
+        osName: String = System.getProperty("os.name"),
+        osArch: String = System.getProperty("os.arch"),
+    ): CliPlatform {
+        val os = when {
+            osName.startsWith("Windows", ignoreCase = true) -> "windows"
+            osName.startsWith("Mac", ignoreCase = true) || osName.startsWith("Darwin", ignoreCase = true) -> "darwin"
+            osName.startsWith("Linux", ignoreCase = true) -> "linux"
+            else -> throw CliException("unsupported_platform", "The bundled CLI does not support operating system: $osName")
+        }
+        val arch = when (osArch.lowercase()) {
+            "amd64", "x86_64", "x64" -> "amd64"
+            "arm64", "aarch64" -> "arm64"
+            else -> throw CliException("unsupported_platform", "The bundled CLI does not support architecture: $osArch")
+        }
+        return CliPlatform(os, arch, if (os == "windows") "local-config.exe" else "local-config")
+    }
+
+    private fun extractBundledCli(platform: CliPlatform): Path {
+        val bytes = CliCommandResolver::class.java.getResourceAsStream(platform.resourcePath)?.use { it.readBytes() }
+            ?: throw CliException(
+                "bundled_cli_missing",
+                "The plugin package does not contain the Local Config Sync CLI for ${platform.os}-${platform.arch}.",
+            )
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes).take(8).joinToString("") { "%02x".format(it) }
-        val directory = Path.of(PathManager.getSystemPath(), "local-config-sync", "cli")
-        val target = directory.resolve("local-config-$digest.mjs")
+        val directory = Path.of(PathManager.getSystemPath(), "local-config-sync", "cli", "${platform.os}-${platform.arch}")
+        val suffix = if (platform.os == "windows") ".exe" else ""
+        val target = directory.resolve("local-config-$digest$suffix")
         if (Files.isRegularFile(target)) return target
 
         try {
@@ -46,57 +59,12 @@ internal object CliCommandResolver {
             runCatching { Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE) }
                 .recoverCatching { Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING) }
                 .getOrThrow()
-            target.toFile().setExecutable(true, true)
+            if (platform.os != "windows" && !target.toFile().setExecutable(true, true)) {
+                throw IllegalStateException("Cannot mark the bundled CLI as executable: $target")
+            }
             return target
         } catch (error: Exception) {
             throw CliException("bundled_cli_extract_failed", "Cannot prepare the bundled Local Config Sync CLI.", error.message.orEmpty())
-        }
-    }
-
-    private fun findNodeExecutable(): String? {
-        val executableName = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "node.exe" else "node"
-        val candidates = linkedSetOf<Path>()
-        System.getenv("PATH").orEmpty().split(File.pathSeparatorChar).filter(String::isNotBlank)
-            .mapTo(candidates) { Path.of(it).resolve(executableName) }
-
-        val home = Path.of(System.getProperty("user.home"))
-        listOf(
-            home.resolve(".volta/bin/$executableName"),
-            home.resolve(".asdf/shims/$executableName"),
-            home.resolve(".local/share/mise/shims/$executableName"),
-            Path.of("/opt/homebrew/bin/$executableName"),
-            Path.of("/usr/local/bin/$executableName"),
-            Path.of("/usr/bin/$executableName"),
-        ).forEach(candidates::add)
-
-        val nvmVersions = home.resolve(".nvm/versions/node")
-        if (Files.isDirectory(nvmVersions)) {
-            runCatching {
-                Files.newDirectoryStream(nvmVersions).use { directories ->
-                    directories.filter(Files::isDirectory)
-                        .sortedByDescending { it.fileName.toString().removePrefix("v").substringBefore('.').toIntOrNull() ?: -1 }
-                        .mapTo(candidates) { it.resolve("bin/$executableName") }
-                }
-            }
-        }
-        return candidates.firstOrNull { Files.isRegularFile(it) && (System.getProperty("os.name").startsWith("Windows", true) || Files.isExecutable(it)) }?.toString()
-    }
-
-    private fun validateNode(executable: String) {
-        if (validatedNodes.contains(executable)) return
-        try {
-            val process = ProcessBuilder(executable, "--version").redirectErrorStream(true).start()
-            val version = process.inputStream.bufferedReader().readText().trim()
-            val exitCode = process.waitFor()
-            val major = version.removePrefix("v").substringBefore('.').toIntOrNull()
-            if (exitCode != 0 || major == null || major < 20) {
-                throw CliException("node_incompatible", "Node.js 20 or newer is required; detected ${version.ifBlank { "an unknown version" }}.")
-            }
-            validatedNodes += executable
-        } catch (error: CliException) {
-            throw error
-        } catch (error: Exception) {
-            throw CliException("node_unavailable", "Cannot start Node.js for the bundled CLI.", error.message.orEmpty())
         }
     }
 }

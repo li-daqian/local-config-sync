@@ -16,8 +16,8 @@
           <li>sync status in the IDE status bar.</li>
         </ul>
         <p>
-          The plugin includes a compatible CLI bundle and detects common Node.js 20+
-          installations automatically. Advanced executable overrides are available under
+          The plugin includes native CLI binaries for Linux, macOS, and Windows on x64 and ARM64,
+          with no Node.js runtime requirement. Advanced executable overrides are available under
           <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git credentials
           or synchronize detected secret files by default.
         </p>

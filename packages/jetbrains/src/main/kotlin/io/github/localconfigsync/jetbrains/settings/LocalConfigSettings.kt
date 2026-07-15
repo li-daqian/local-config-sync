@@ -11,7 +11,6 @@ import com.intellij.openapi.components.Storage
 class LocalConfigSettings : PersistentStateComponent<LocalConfigSettings.State> {
     data class State(
         var cliPath: String = "",
-        var nodePath: String = "",
     )
 
     private var state = State()
@@ -27,10 +26,6 @@ class LocalConfigSettings : PersistentStateComponent<LocalConfigSettings.State> 
     var cliPath: String
         get() = state.cliPath
         set(value) { state.cliPath = value.trim() }
-
-    var nodePath: String
-        get() = state.nodePath
-        set(value) { state.nodePath = value.trim() }
 
     companion object {
         fun getInstance(): LocalConfigSettings = ApplicationManager.getApplication().getService(LocalConfigSettings::class.java)

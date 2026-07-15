@@ -16,7 +16,7 @@ object LocalConfigCli {
         val invocation = CliCommandResolver.resolve()
         val commandLine = GeneralCommandLine()
             .withExePath(invocation.executable)
-            .withParameters(invocation.prefixArguments + args + "--json")
+            .withParameters(args + "--json")
             .withCharset(StandardCharsets.UTF_8)
         if (projectPath != null) commandLine.withWorkDirectory(projectPath)
 

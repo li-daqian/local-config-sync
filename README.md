@@ -42,10 +42,11 @@ JetBrains Plugin -> VS Code Extension -> Cursor Extension -> CLI
 
 ```text
 packages/
-  core/       TypeScript：领域模型、Repository Driver、mapping、sync、安全策略
-  cli/        TypeScript：命令行与稳定 JSON contract
   jetbrains/  Kotlin：Settings、Setup/Auth/Sync action、status widget
-tests/        core 与真实 Git 端到端测试
+cmd/
+  local-config/  Go：CLI 与稳定 JSON contract
+internal/
+  core/          Go：领域模型、Repository Driver、mapping、sync、安全策略与测试
 ```
 
 JetBrains 插件不直接操作 Git 或配置文件，只调用 `local-config ... --json`。
@@ -54,24 +55,22 @@ JetBrains 插件不直接操作 Git 或配置文件，只调用 `local-config ..
 
 要求：
 
-- Node.js 20+
-- pnpm 10+
+- Go 1.26+
 - 系统 `git` CLI
 - 构建插件时需要 JDK 21；Gradle Wrapper 会自动下载 Gradle 9
 
 构建 CLI：
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm build
-pnpm local-config -- --help
+go build -trimpath -o build/local-config ./cmd/local-config
+./build/local-config --help
 ```
 
 开发环境中可把 CLI 链接到用户 PATH：
 
 ```bash
 mkdir -p ~/.local/bin
-ln -sfn "$(pwd)/packages/cli/dist/cli.js" ~/.local/bin/local-config
+go build -trimpath -o ~/.local/bin/local-config ./cmd/local-config
 ```
 
 构建 JetBrains 插件：
@@ -81,7 +80,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
   -PlocalIdeaPath=/absolute/path/to/idea buildPlugin
 ```
 
-安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.2.zip` 后即可使用。插件内置兼容的 CLI bundle，并自动检测系统、nvm、Volta、asdf 和 mise 中的 Node.js 20+；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI / Node.js 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.2.zip` 后即可使用。插件内置 Linux、macOS、Windows 的 amd64/arm64 六个 native CLI binary，不要求用户安装 Node.js；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
 插件右侧 `Local Config Sync` Tool Window 集中展示项目状态、Repository、Mapping 和错误诊断，并提供 Setup、Sync、Git Auth 和 Refresh。点击底部状态栏的 `Local Config: ...` 会直接打开该面板。
 
@@ -191,10 +190,14 @@ local-config sync --project /path/to/business-project
 ## 验证
 
 ```bash
-pnpm check
-pnpm plugin:build
-pnpm plugin:check
+go vet ./...
+go test ./...
+go build -trimpath -o build/local-config ./cmd/local-config
+packages/jetbrains/gradlew -p packages/jetbrains buildPlugin
+packages/jetbrains/gradlew -p packages/jetbrains test verifyPluginProjectConfiguration verifyPluginStructure buildPlugin
 ```
+
+根目录仍保留 `pnpm check`、`pnpm plugin:build` 和 `pnpm plugin:check` 作为兼容的 task alias，但 core/CLI 的构建和运行不依赖 Node.js。
 
 `plugin:check` 是日常本地校验，运行项目配置、插件结构检查并生成 ZIP。开发机已有 IntelliJ 安装时，可避免下载 SDK：
 
@@ -204,7 +207,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
   verifyPluginProjectConfiguration verifyPluginStructure buildPlugin
 ```
 
-完整二进制兼容性矩阵由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行，覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Gradle 依赖并上传 `pluginVerifier` 报告。
+完整验证由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行：native CLI 会分别在 Linux、macOS、Windows 的 amd64/arm64 runner 上构建并执行；插件兼容性覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Go/Gradle 依赖并上传 `pluginVerifier` 报告。
 
 已登录 GitHub CLI 后，可以等待当前分支最新一次 JetBrains workflow，并自动读取失败步骤、下载 verifier report 和扫描关键诊断：
 

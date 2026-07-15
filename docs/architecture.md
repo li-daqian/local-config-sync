@@ -36,22 +36,21 @@
 
 ## 语言与入口边界
 
-MVP 的核心实现语言建议使用 TypeScript + Node.js。
+核心实现语言使用 Go，发布为不依赖语言 runtime 的 native CLI。
 
 原因：
 
-- CLI、文件系统、Git、远端存储 SDK、文件监听和 JSON 输出生态成熟。
-- VS Code / Cursor extension 后续可以直接复用 TypeScript 类型和部分客户端代码。
-- JetBrains 插件可以通过进程调用 CLI，不需要把同步算法写进 Kotlin 插件。
-- Desktop tray app 可以调用 CLI 或复用同一个 local agent。
-- Web UI 无法直接访问用户本机文件和 Git，必须通过本机 local agent 间接调用 core。
+- CLI/core 可以作为单文件二进制分发，不要求 IDE 用户安装 Node.js 等额外 runtime。
+- 文件系统、进程调用、JSON/YAML 和跨平台构建均可由 pure Go 实现。
+- JetBrains、VS Code / Cursor 和 Desktop 入口统一通过 CLI + JSON contract 调用，不复制同步算法。
+- Web UI 无法直接访问用户本机文件和 Git，仍必须通过 Go local agent 间接调用 core。
 
 边界原则：
 
 - `local-config-core` 保持 IDE 中立，不依赖 JetBrains SDK、VS Code API、Electron、浏览器 API。
 - Entry Layer 只负责 UI、当前项目路径识别、命令触发、状态展示和错误展示。
 - 跨入口的稳定契约优先使用 CLI + JSON，而不是共享 IDE 内部对象。
-- VS Code extension 可以在进程内复用 TypeScript 包，但用户可见行为仍应以 CLI contract 为准。
+- VS Code extension 通过进程调用 native CLI；共享的是命名 JSON contract，而不是语言内部类型。
 - JetBrains 插件使用 Kotlin 实现 UI，通过 `local-config` CLI 调用 core。
 
 推荐调用形态：
@@ -59,10 +58,10 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 ```text
 +--------------------+      CLI process / JSON      +---------------------+
 | JetBrains Plugin   | ---------------------------> | local-config CLI    |
-| Kotlin             |                              | TypeScript + Node   |
+| Kotlin             |                              | Go native binary    |
 +--------------------+                              +----------+----------+
                                                                   |
-+--------------------+      import or CLI / JSON                  v
++--------------------+      CLI process / JSON                    v
 | VS Code Extension  | ---------------------------> +---------------------+
 | TypeScript         |                              | local-config-core   |
 +--------------------+                              +----------+----------+
@@ -73,7 +72,7 @@ MVP 的核心实现语言建议使用 TypeScript + Node.js。
 +--------------------+                              +---------------------+
 ```
 
-后续如果需要单文件二进制、启动性能或更强的 native 能力，可以在 CLI contract 稳定后评估 Rust/Go native helper。第一版不建议直接用 Rust/Go 重写 core，避免在产品边界尚未稳定时提高迭代成本。
+JetBrains 插件同时内置 `linux`、`darwin`、`windows` 的 `amd64` / `arm64` 六个 target，并在运行时只提取当前平台的 binary。Git Driver 仍复用系统 `git` 和用户已有凭证。
 
 ## 关键模块
 

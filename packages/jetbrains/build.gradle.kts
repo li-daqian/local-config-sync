@@ -16,8 +16,12 @@ val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNu
 val allowIdeSdkDownload = providers.gradleProperty("allowIdeSdkDownload")
     .map { it.toBooleanStrict() }
     .orElse(false)
+val goExecutable = providers.gradleProperty("goExecutable")
+    .orElse(providers.environmentVariable("GO_EXECUTABLE"))
+    .orElse("go")
 
 dependencies {
+    testImplementation(kotlin("test"))
     intellijPlatform {
         if (localIdeaPath != null) {
             local(localIdeaPath)
@@ -59,8 +63,8 @@ intellijPlatform {
               <li>sync status in the IDE status bar.</li>
             </ul>
             <p>
-              The plugin includes a compatible CLI bundle and detects common Node.js 20+
-              installations automatically. Advanced executable overrides are available under
+              The plugin includes native CLI binaries for Linux, macOS, and Windows on x64 and
+              ARM64, with no Node.js runtime requirement. Advanced executable overrides are available under
               <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git credentials
               or synchronize detected secret files by default.
             </p>
@@ -70,7 +74,8 @@ intellijPlatform {
             <ul>
               <li>Add a right-side project dashboard with setup, sync, authentication, and diagnostics.</li>
               <li>Open the dashboard from the status bar and preserve actionable CLI errors.</li>
-              <li>Bundle the CLI and automatically detect Node.js 20+.</li>
+              <li>Bundle native Go CLI binaries for six OS and architecture targets.</li>
+              <li>Remove the end-user Node.js runtime requirement.</li>
               <li>Place advanced executable overrides under Settings | Tools.</li>
             </ul>
         """.trimIndent()
@@ -101,24 +106,45 @@ intellijPlatform {
 }
 
 tasks {
-    val bundleCli by registering(Exec::class) {
-        val repositoryRoot = projectDir.resolve("../..").canonicalFile
-        workingDir(repositoryRoot)
-        commandLine("pnpm", "bundle:cli")
-        inputs.files(
-            repositoryRoot.resolve("package.json"),
-            repositoryRoot.resolve("pnpm-lock.yaml"),
-            repositoryRoot.resolve("scripts/bundle-cli.mjs"),
-            fileTree(repositoryRoot.resolve("packages/core/src")),
-            fileTree(repositoryRoot.resolve("packages/cli/src")),
-        )
-        outputs.file(layout.buildDirectory.file("generated-resources/cli/local-config.mjs"))
+    val repositoryRoot = projectDir.resolve("../..").canonicalFile
+    val cliTargets = listOf(
+        "linux-amd64", "linux-arm64",
+        "darwin-amd64", "darwin-arm64",
+        "windows-amd64", "windows-arm64",
+    )
+    val bundleCliTasks = cliTargets.map { target ->
+        val (targetOs, targetArch) = target.split("-")
+        val executableName = if (targetOs == "windows") "local-config.exe" else "local-config"
+        val outputFile = layout.buildDirectory.file("generated-resources/cli/$target/$executableName").get().asFile
+        register<Exec>("bundleCli${targetOs.replaceFirstChar(Char::uppercase)}${targetArch.replaceFirstChar(Char::uppercase)}") {
+            workingDir(repositoryRoot)
+            doFirst {
+                outputFile.parentFile.mkdirs()
+            }
+            environment("CGO_ENABLED", "0")
+            environment("GOOS", targetOs)
+            environment("GOARCH", targetArch)
+            environment("GOTOOLCHAIN", "local")
+            environment("GOCACHE", layout.buildDirectory.dir("go-cache").get().asFile.absolutePath)
+            commandLine(
+                goExecutable.get(), "build", "-trimpath", "-ldflags=-s -w -buildid=",
+                "-o", outputFile.absolutePath,
+                "./cmd/local-config",
+            )
+            inputs.files(repositoryRoot.resolve("go.mod"), repositoryRoot.resolve("go.sum"))
+            inputs.files(fileTree(repositoryRoot.resolve("cmd")), fileTree(repositoryRoot.resolve("internal")))
+            outputs.file(outputFile)
+        }
+    }
+    val bundleCli by registering {
+        dependsOn(bundleCliTasks)
     }
 
     processResources {
         dependsOn(bundleCli)
-        from(layout.buildDirectory.file("generated-resources/cli/local-config.mjs")) {
+        from(layout.buildDirectory.dir("generated-resources/cli")) {
             into("cli")
+            cliTargets.forEach { include("$it/**") }
         }
     }
 

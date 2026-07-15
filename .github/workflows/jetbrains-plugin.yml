@@ -6,20 +6,20 @@ on:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
       - "packages/jetbrains/**"
-      - "packages/core/**"
-      - "packages/cli/**"
-      - "scripts/bundle-cli.mjs"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
       - "package.json"
-      - "pnpm-lock.yaml"
   pull_request:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
       - "packages/jetbrains/**"
-      - "packages/core/**"
-      - "packages/cli/**"
-      - "scripts/bundle-cli.mjs"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
       - "package.json"
-      - "pnpm-lock.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -29,6 +29,48 @@ permissions:
   contents: read
 
 jobs:
+  native-cli:
+    name: Native CLI (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            executable: local-config
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            executable: local-config
+          - target: darwin-amd64
+            runner: macos-15-intel
+            executable: local-config
+          - target: darwin-arm64
+            runner: macos-15
+            executable: local-config
+          - target: windows-amd64
+            runner: windows-2025
+            executable: local-config.exe
+          - target: windows-arm64
+            runner: windows-11-arm
+            executable: local-config.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and run native CLI
+        shell: bash
+        run: |
+          test "$(go env GOOS)-$(go env GOARCH)" = "${{ matrix.target }}"
+          go build -trimpath -ldflags="-s -w -buildid=" -o "build/${{ matrix.executable }}" ./cmd/local-config
+          "./build/${{ matrix.executable }}" --version
+
   verify:
     name: Build and verify
     runs-on: ubuntu-latest
@@ -42,17 +84,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          node-version: 24
-          cache: pnpm
+          go-version-file: go.mod
+          cache: true
 
-      - name: Install JavaScript dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Verify Go core and CLI
+        run: go vet ./... && go test ./...
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -64,7 +103,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run plugin verification
-        run: packages/jetbrains/gradlew -p packages/jetbrains -PallowIdeSdkDownload=true verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
+        run: packages/jetbrains/gradlew -p packages/jetbrains -PallowIdeSdkDownload=true test verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 
       - name: Summarize plugin verifier reports
         if: ${{ always() }}
