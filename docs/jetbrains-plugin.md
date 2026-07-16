@@ -82,7 +82,7 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 
 1. 检查 CLI 和当前 Git project。
 2. 选择 GitHub provider；验证 `gh auth`，未登录时启动 GitHub CLI browser flow。
-3. 加载期间展示 modal progress；随后通过 searchable combo box 选择当前账号名下的 public/private Repository，并注册为普通 Git Repository。
+3. 加载期间展示 modal progress；随后通过 Combobox 选择 Repository：点击选择框后，popup 顶部的搜索框可按 owner 或仓库名过滤 public/private Repository，下方列表用于确认选择。
 4. 选择 Repository 内已有文件，或从项目内选择本地文件创建远端路径。
 5. 选择/输入项目内的 target file path。
 6. 调用 `preview` 判断 `remote_only`、`local_only`、`identical` 或 `conflict`。

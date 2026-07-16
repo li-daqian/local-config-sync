@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.github.localconfigsync"
-version = "0.1.2"
+version = "0.1.5"
 
 val localIdeaPath = providers.gradleProperty("localIdeaPath").orNull
 val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
@@ -70,13 +70,13 @@ intellijPlatform {
             </p>
         """.trimIndent()
         changeNotes = """
-            <p>Integrated tool window and bundled CLI release.</p>
+            <p>GitHub repository setup UX improvements.</p>
             <ul>
-              <li>Add a right-side project dashboard with setup, sync, authentication, and diagnostics.</li>
-              <li>Open the dashboard from the status bar and preserve actionable CLI errors.</li>
-              <li>Bundle native Go CLI binaries for six OS and architecture targets.</li>
-              <li>Remove the end-user Node.js runtime requirement.</li>
-              <li>Place advanced executable overrides under Settings | Tools.</li>
+              <li>Add a searchable popover combobox for selecting public and private GitHub repositories.</li>
+              <li>Keep the search field inside the repository popup and filter by owner or repository name.</li>
+              <li>Support Linux input methods in the repository search field.</li>
+              <li>Show modal progress while GitHub authentication and repository loading are running.</li>
+              <li>Handle repositories with no files and nullable CLI wire payloads safely.</li>
             </ul>
         """.trimIndent()
         ideaVersion {

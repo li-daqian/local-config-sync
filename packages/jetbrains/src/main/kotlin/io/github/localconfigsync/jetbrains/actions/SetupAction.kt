@@ -11,11 +11,14 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopup
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import io.github.localconfigsync.jetbrains.cli.CliException
 import io.github.localconfigsync.jetbrains.cli.ConfiguredRepository
@@ -25,18 +28,25 @@ import io.github.localconfigsync.jetbrains.cli.LocalConfigCli
 import io.github.localconfigsync.jetbrains.cli.MappingPreviewResponse
 import io.github.localconfigsync.jetbrains.cli.RepositoryFilesResponse
 import io.github.localconfigsync.jetbrains.cli.RepositoryListResponse
+import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Action
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListModel
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
-import javax.swing.JTextField
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -216,14 +226,15 @@ private class GitHubRepositorySelectionDialog(
     repositories: List<GitHubRepository>,
 ) : DialogWrapper(project, true) {
     private val allOptions = repositories.map(::RepositoryOption)
-    private val comboBox = ComboBox(DefaultComboBoxModel(allOptions.toTypedArray())).apply {
-        isEditable = true
-        setMinimumAndPreferredWidth(560)
+    private var repositoryPopup: JBPopup? = null
+    private val repositoryTrigger = JButton("Choose a repository…").apply {
+        horizontalAlignment = SwingConstants.LEFT
+        preferredSize = Dimension(JBUI.scale(560), JBUI.scale(32))
+        minimumSize = preferredSize
+        toolTipText = "Open the searchable repository list"
+        addActionListener { showRepositoryPopup() }
     }
-    private val editor = comboBox.editor.editorComponent as JTextField
     private var selectedOption: RepositoryOption? = null
-    private var filterGeneration = 0
-    private var updatingModel = false
 
     val selectedRepository: GitHubRepository?
         get() = selectedOption?.repository
@@ -232,69 +243,120 @@ private class GitHubRepositorySelectionDialog(
         title = "Choose a GitHub Repository"
         setOKButtonText("Select")
         init()
-        updatingModel = true
-        comboBox.selectedItem = null
-        comboBox.editor.item = ""
-        updatingModel = false
         setOKActionEnabled(false)
-        editor.toolTipText = "Type an owner or repository name, or open the dropdown"
-        editor.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(event: DocumentEvent) = scheduleFilter()
-            override fun removeUpdate(event: DocumentEvent) = scheduleFilter()
-            override fun changedUpdate(event: DocumentEvent) = scheduleFilter()
-        })
-        comboBox.addActionListener {
-            if (!updatingModel) {
-                selectedOption = comboBox.selectedItem as? RepositoryOption
-                if (selectedOption != null) filterGeneration++
-                setOKActionEnabled(selectedOption != null)
-            }
-        }
     }
 
     override fun createCenterPanel(): JComponent = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.empty(8)
-        add(JBLabel("Repository (type to search)"))
+        add(JBLabel("Repository"))
         add(Box.createVerticalStrut(JBUI.scale(4)))
-        add(comboBox)
+        add(repositoryTrigger)
     }
 
-    override fun getPreferredFocusedComponent(): JComponent = editor
+    override fun getPreferredFocusedComponent(): JComponent = repositoryTrigger
 
-    private fun scheduleFilter() {
-        if (updatingModel) return
-        val currentSelection = comboBox.selectedItem as? RepositoryOption
-        if (currentSelection != null && editor.text == currentSelection.toString()) {
-            selectedOption = currentSelection
-            filterGeneration++
+    private fun showRepositoryPopup() {
+        if (repositoryPopup?.isVisible == true) return
+
+        val searchField = JBTextField().apply {
+            emptyText.text = "Search by owner or repository name"
+            enableInputMethods(true)
+        }
+        val listModel = DefaultListModel<RepositoryOption>()
+        val repositoryList = JBList(listModel).apply {
+            visibleRowCount = 8
+            emptyText.text = "No matching repositories"
+        }
+
+        fun updateMatches() {
+            val filtered = allOptions.filter {
+                repositorySearchMatches(it.repository.nameWithOwner, searchField.text)
+            }
+            listModel.removeAllElements()
+            filtered.forEach(listModel::addElement)
+            if (!listModel.isEmpty) {
+                repositoryList.selectedIndex = selectedOption?.let(filtered::indexOf)?.takeIf { it >= 0 } ?: 0
+            }
+        }
+
+        fun choose(option: RepositoryOption?) {
+            if (option == null) return
+            selectedOption = option
+            repositoryTrigger.text = option.toString()
             setOKActionEnabled(true)
-            return
+            repositoryPopup?.cancel()
         }
-        selectedOption = null
-        setOKActionEnabled(false)
-        val query = editor.text
-        val generation = ++filterGeneration
-        SwingUtilities.invokeLater {
-            if (generation != filterGeneration || editor.text != query) return@invokeLater
-            val matches = filterGitHubRepositories(allOptions.map(RepositoryOption::repository), query).toSet()
-            val filtered = allOptions.filter { it.repository in matches }
-            updatingModel = true
-            comboBox.model = DefaultComboBoxModel(filtered.toTypedArray())
-            comboBox.selectedItem = null
-            comboBox.editor.item = query
-            updatingModel = false
-            if (comboBox.isShowing && filtered.isNotEmpty()) comboBox.isPopupVisible = true
+
+        searchField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = updateMatches()
+            override fun removeUpdate(event: DocumentEvent) = updateMatches()
+            override fun changedUpdate(event: DocumentEvent) = updateMatches()
+        })
+        searchField.addActionListener { choose(repositoryList.selectedValue) }
+        searchField.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(event: KeyEvent) {
+                if (event.keyCode == KeyEvent.VK_DOWN && !listModel.isEmpty) {
+                    repositoryList.requestFocusInWindow()
+                    repositoryList.selectedIndex = 0
+                    event.consume()
+                }
+            }
+        })
+        repositoryList.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(event: KeyEvent) {
+                if (event.keyCode == KeyEvent.VK_ENTER) {
+                    choose(repositoryList.selectedValue)
+                    event.consume()
+                }
+            }
+        })
+        repositoryList.addMouseListener(object : MouseAdapter() {
+            override fun mouseReleased(event: MouseEvent) {
+                if (SwingUtilities.isLeftMouseButton(event)) {
+                    val index = repositoryList.locationToIndex(event.point)
+                    if (index >= 0 && repositoryList.getCellBounds(index, index).contains(event.point)) {
+                        choose(listModel.getElementAt(index))
+                    }
+                }
+            }
+        })
+
+        updateMatches()
+        val popupContent = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            border = JBUI.Borders.empty(8)
+            add(searchField, BorderLayout.NORTH)
+            add(JScrollPane(repositoryList), BorderLayout.CENTER)
+            preferredSize = Dimension(maxOf(repositoryTrigger.width, JBUI.scale(560)), JBUI.scale(280))
         }
+        val popup = JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(popupContent, searchField)
+            .setRequestFocus(true)
+            .setFocusable(true)
+            .setResizable(false)
+            .setMovable(false)
+            .setStretchToOwnerWidth(true)
+            .setCancelOnClickOutside(true)
+            // IBus/Fcitx candidate windows may be reported as separate windows on Linux.
+            .setCancelOnOtherWindowOpen(false)
+            .setCancelOnWindowDeactivation(false)
+            .setCancelKeyEnabled(true)
+            .setMinSize(Dimension(JBUI.scale(360), JBUI.scale(220)))
+            .createPopup()
+        repositoryPopup = popup
+        popup.setFinalRunnable {
+            if (repositoryPopup === popup) repositoryPopup = null
+        }
+        popup.showUnderneathOf(repositoryTrigger)
     }
 }
 
 internal fun filterGitHubRepositories(repositories: List<GitHubRepository>, query: String): List<GitHubRepository> {
-    val normalized = query.trim()
-    return repositories.filter { repository ->
-        normalized.isEmpty() || repository.nameWithOwner.contains(normalized, ignoreCase = true)
-    }
+    return repositories.filter { repository -> repositorySearchMatches(repository.nameWithOwner, query) }
 }
+
+private fun repositorySearchMatches(candidate: String, query: String): Boolean =
+    candidate.contains(query.trim(), ignoreCase = true)
 
 private fun ensureRepositoryConfigured(project: Project, selected: GitHubRepository): String {
     val configured = LocalConfigCli.execute(
