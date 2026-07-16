@@ -9,10 +9,15 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.SearchTextField
+import com.intellij.ui.components.JBLabel
+import com.intellij.util.ui.JBUI
 import io.github.localconfigsync.jetbrains.cli.CliException
 import io.github.localconfigsync.jetbrains.cli.ConfiguredRepository
 import io.github.localconfigsync.jetbrains.cli.GitHubRepositoriesResponse
@@ -25,10 +30,16 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Action
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.DefaultComboBoxModel
 import javax.swing.JComponent
+import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.SwingUtilities
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 class SetupAction : AnAction() {
     override fun update(event: AnActionEvent) { event.presentation.isEnabled = event.project?.basePath != null }
@@ -42,23 +53,25 @@ internal fun startSetup(project: Project) {
     val provider = Messages.showDialog(project, "Choose a repository provider", "Setup Local Config Sync", providers, 0, null)
     if (provider < 0) return
 
-    runBackground(project, "Setting Up Local Config Sync") {
-        LocalConfigCli.command(project, listOf("init", "--default-link-mode", "copy"))
-        if (!ensureGitHubAuthentication(project)) return@runBackground
+    val repositories = try {
+        loadGitHubRepositories(project)
+    } catch (error: Throwable) {
+        reportFailure(project, error)
+        return
+    } ?: return
+    val selected = chooseGitHubRepository(project, repositories) ?: return
 
-        val repositories = LocalConfigCli.execute(
-            project,
-            listOf("provider", "github", "repositories"),
-            GitHubRepositoriesResponse::class.java,
-        ).repositories
-        val selected = chooseGitHubRepository(project, repositories) ?: return@runBackground
+    runBackground(project, "Setting Up Local Config Sync") { indicator ->
+        indicator.text = "Preparing ${selected.nameWithOwner}…"
         val repositoryId = ensureRepositoryConfigured(project, selected)
+        indicator.text = "Loading repository files…"
         val repositoryFiles = LocalConfigCli.execute(
             project,
             listOf("repository", "files", repositoryId),
             RepositoryFilesResponse::class.java,
-        ).files
+        ).files.orEmpty()
         val paths = chooseMappingPaths(project, repositoryFiles) ?: return@runBackground
+        indicator.text = "Comparing local and repository files…"
         val preview = LocalConfigCli.execute(
             project,
             listOf(
@@ -68,6 +81,7 @@ internal fun startSetup(project: Project) {
             MappingPreviewResponse::class.java,
         )
         val strategy = chooseInitialStrategy(project, preview) ?: return@runBackground
+        indicator.text = "Creating file mapping and synchronizing…"
         LocalConfigCli.command(
             project,
             listOf(
@@ -79,6 +93,30 @@ internal fun startSetup(project: Project) {
         LocalConfigCli.command(project, listOf("sync", "--project", project.basePath.orEmpty()))
         notify(project, "${paths.localPath} is synchronized with ${selected.nameWithOwner}:${paths.remotePath}")
     }
+}
+
+private fun loadGitHubRepositories(project: Project): List<GitHubRepository>? {
+    val result = AtomicReference<Result<List<GitHubRepository>?>?>()
+    val completed = ProgressManager.getInstance().runProcessWithProgressSynchronously(
+        {
+            result.set(runCatching {
+                ProgressManager.getInstance().progressIndicator?.text = "Checking GitHub authentication…"
+                LocalConfigCli.command(project, listOf("init", "--default-link-mode", "copy"))
+                if (!ensureGitHubAuthentication(project)) return@runCatching null
+                ProgressManager.getInstance().progressIndicator?.text = "Loading GitHub repositories…"
+                LocalConfigCli.execute(
+                    project,
+                    listOf("provider", "github", "repositories"),
+                    GitHubRepositoriesResponse::class.java,
+                ).repositories.orEmpty()
+            })
+        },
+        "Loading GitHub Repositories",
+        true,
+        project,
+    )
+    if (!completed) return null
+    return result.get()?.getOrThrow()
 }
 
 private fun ensureGitHubAuthentication(project: Project): Boolean {
@@ -162,13 +200,69 @@ private fun chooseGitHubRepository(project: Project, repositories: List<GitHubRe
         onUiThread { Messages.showInfoMessage(project, "No accessible GitHub repositories were found.", "Setup Local Config Sync") }
         return null
     }
-    val labels = repositories.map { repository ->
-        repository.nameWithOwner + if (repository.private) "  · Private" else "  · Public"
-    }.toTypedArray()
-    val selected = onUiThread {
-        Messages.showDialog(project, "Choose a GitHub repository", "Setup Local Config Sync", labels, 0, null)
+    return onUiThread {
+        GitHubRepositorySelectionDialog(project, repositories).let { dialog ->
+            if (dialog.showAndGet()) dialog.selectedRepository else null
+        }
     }
-    return repositories.getOrNull(selected)
+}
+
+private data class RepositoryOption(val repository: GitHubRepository) {
+    override fun toString(): String = repository.nameWithOwner + if (repository.private) "  · Private" else "  · Public"
+}
+
+private class GitHubRepositorySelectionDialog(
+    project: Project,
+    repositories: List<GitHubRepository>,
+) : DialogWrapper(project, true) {
+    private val allOptions = repositories.map(::RepositoryOption)
+    private val search = SearchTextField(false)
+    private val comboBox = ComboBox(DefaultComboBoxModel(allOptions.toTypedArray())).apply {
+        setMinimumAndPreferredWidth(560)
+    }
+
+    val selectedRepository: GitHubRepository?
+        get() = (comboBox.selectedItem as? RepositoryOption)?.repository
+
+    init {
+        title = "Choose a GitHub Repository"
+        setOKButtonText("Select")
+        init()
+        search.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = filterRepositories()
+            override fun removeUpdate(event: DocumentEvent) = filterRepositories()
+            override fun changedUpdate(event: DocumentEvent) = filterRepositories()
+        })
+    }
+
+    override fun createCenterPanel(): JComponent = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(8)
+        add(JBLabel("Search repositories"))
+        add(Box.createVerticalStrut(JBUI.scale(4)))
+        add(search)
+        add(Box.createVerticalStrut(JBUI.scale(12)))
+        add(JBLabel("Repository"))
+        add(Box.createVerticalStrut(JBUI.scale(4)))
+        add(comboBox)
+    }
+
+    override fun getPreferredFocusedComponent(): JComponent = search.textEditor
+
+    private fun filterRepositories() {
+        val query = search.text.trim()
+        val matches = filterGitHubRepositories(allOptions.map(RepositoryOption::repository), query).toSet()
+        val filtered = allOptions.filter { it.repository in matches }
+        comboBox.model = DefaultComboBoxModel(filtered.toTypedArray())
+        setOKActionEnabled(filtered.isNotEmpty())
+    }
+}
+
+internal fun filterGitHubRepositories(repositories: List<GitHubRepository>, query: String): List<GitHubRepository> {
+    val normalized = query.trim()
+    return repositories.filter { repository ->
+        normalized.isEmpty() || repository.nameWithOwner.contains(normalized, ignoreCase = true)
+    }
 }
 
 private fun ensureRepositoryConfigured(project: Project, selected: GitHubRepository): String {
@@ -176,7 +270,7 @@ private fun ensureRepositoryConfigured(project: Project, selected: GitHubReposit
         project,
         listOf("repository", "list"),
         RepositoryListResponse::class.java,
-    ).repositories
+    ).repositories.orEmpty()
     configured.firstOrNull { it.matches(selected) }?.let { return it.id }
 
     val baseId = githubRepositoryId(selected.nameWithOwner)

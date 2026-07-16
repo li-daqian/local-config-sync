@@ -148,9 +148,11 @@ local-config repository add webdav \
 ```bash
 local-config repository list --json
 local-config repository show personal-git --json
+local-config repository files personal-git --json
 ```
 
 返回 Repository id、name、type、workspace、连接状态和公共 capabilities，不返回凭证内容。
+`repository files` 返回 managed workspace 内的文件路径；空 Repository 的 `files` 必须编码为 `[]`，不能编码为 `null`。
 
 ### doctor
 

@@ -32,7 +32,7 @@ func ResolveInside(root, relativePath string) (string, error) {
 }
 
 func ListFiles(root string) ([]string, error) {
-	var output []string
+	output := []string{}
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

@@ -56,7 +56,7 @@ data class ConfiguredRepository(
 data class RepositoryListResponse(
     val ok: Boolean = false,
     val command: String = "repository.list",
-    val repositories: List<ConfiguredRepository> = emptyList(),
+    val repositories: List<ConfiguredRepository>? = emptyList(),
 )
 
 data class GitHubRepository(
@@ -70,14 +70,14 @@ data class GitHubRepository(
 data class GitHubRepositoriesResponse(
     val ok: Boolean = false,
     val command: String = "provider.github.repositories",
-    val repositories: List<GitHubRepository> = emptyList(),
+    val repositories: List<GitHubRepository>? = emptyList(),
 )
 
 data class RepositoryFilesResponse(
     val ok: Boolean = false,
     val command: String = "repository.files",
     val repositoryId: String = "",
-    val files: List<String> = emptyList(),
+    val files: List<String>? = emptyList(),
 )
 
 data class MappingPreviewResponse(

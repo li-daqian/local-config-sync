@@ -12,16 +12,20 @@ internal fun runBackground(project: Project, title: String, operation: (Progress
     object : Task.Backgroundable(project, title, true) {
         override fun run(indicator: ProgressIndicator) = operation(indicator)
         override fun onThrowable(error: Throwable) {
-            val cli = error as? CliException
-            LocalConfigStatusService.getInstance(project).recordFailure(
-                cli ?: CliException("operation_failed", error.message ?: "Operation failed"),
-            )
-            notify(project, "${cli?.code ?: "error"}: ${error.message}", NotificationType.ERROR)
+            reportFailure(project, error)
         }
         override fun onSuccess() {
             LocalConfigStatusService.getInstance(project).refresh()
         }
     }.queue()
+}
+
+internal fun reportFailure(project: Project, error: Throwable) {
+    val cli = error as? CliException
+    LocalConfigStatusService.getInstance(project).recordFailure(
+        cli ?: CliException("operation_failed", error.message ?: "Operation failed"),
+    )
+    notify(project, "${cli?.code ?: "error"}: ${error.message}", NotificationType.ERROR)
 }
 
 internal fun notify(project: Project, content: String, type: NotificationType = NotificationType.INFORMATION) {

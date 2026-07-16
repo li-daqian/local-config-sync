@@ -82,7 +82,7 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 
 1. 检查 CLI 和当前 Git project。
 2. 选择 GitHub provider；验证 `gh auth`，未登录时启动 GitHub CLI browser flow。
-3. 展示当前账号名下的 public/private Repository 并注册为普通 Git Repository。
+3. 加载期间展示 modal progress；随后通过 searchable combo box 选择当前账号名下的 public/private Repository，并注册为普通 Git Repository。
 4. 选择 Repository 内已有文件，或从项目内选择本地文件创建远端路径。
 5. 选择/输入项目内的 target file path。
 6. 调用 `preview` 判断 `remote_only`、`local_only`、`identical` 或 `conflict`。
@@ -90,6 +90,8 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 8. 以 `kind=file`、`mode=copy` 建立 mapping，写入 `.git/info/exclude` 并执行首次安全 sync。
 
 GitHub 只是 discovery/auth 入口，不在 Kotlin 中实现 Git clone、commit、push 或冲突检测。
+
+所有 Repository/file list wire DTO 都必须容忍旧 CLI 或空后端返回 `null`，入口层按 empty list 处理；当前 CLI 对空列表稳定输出 `[]`。
 
 ## 状态刷新
 

@@ -55,6 +55,19 @@ func TestFilePreviewAndLinkJSONContract(t *testing.T) {
 	if _, err := run([]string{"repository", "add", "local-folder", "--id", "personal", "--path", repository, "--json"}); err != nil {
 		t.Fatal(err)
 	}
+	filesOutput := captureStdout(t, func() error {
+		_, err := run([]string{"repository", "files", "personal", "--json"})
+		return err
+	})
+	var filesResponse struct {
+		Files json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(filesOutput, &filesResponse); err != nil {
+		t.Fatalf("invalid repository files JSON: %v\n%s", err, filesOutput)
+	}
+	if string(filesResponse.Files) != "[]" {
+		t.Fatalf("empty repository files must be an array, got %s", filesResponse.Files)
+	}
 
 	previewOutput := captureStdout(t, func() error {
 		_, err := run([]string{
