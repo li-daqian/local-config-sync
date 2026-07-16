@@ -189,7 +189,7 @@ func run(rawArgs []string) (activeCommand string, err error) {
 		_ = json.Unmarshal(content, &payload)
 		return activeCommand, success(activeCommand, payload, jsonOutput)
 	case "link":
-		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--repository": true, "--source-path": true, "--target": true, "--mode": true, "--kind": true, "--initial-strategy": true, "--id": true}, map[string]bool{})
+		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--repository": true, "--source-path": true, "--target": true, "--mode": true, "--kind": true, "--initial-strategy": true, "--id": true}, map[string]bool{"--allow-sensitive": true})
 		if err != nil {
 			return activeCommand, err
 		}
@@ -215,7 +215,7 @@ func run(rawArgs []string) (activeCommand string, err error) {
 		}
 		kind := core.MappingKind(parsed.Options["--kind"])
 		strategy := core.InitialStrategy(parsed.Options["--initial-strategy"])
-		mapping, err := service.Link(core.LinkInput{Project: project, RepositoryID: repositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: mode, Kind: kind, InitialStrategy: strategy, ID: parsed.Options["--id"]})
+		mapping, err := service.Link(core.LinkInput{Project: project, RepositoryID: repositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: mode, Kind: kind, InitialStrategy: strategy, ID: parsed.Options["--id"], AllowSensitive: parsed.Flags["--allow-sensitive"]})
 		if err != nil {
 			return activeCommand, err
 		}

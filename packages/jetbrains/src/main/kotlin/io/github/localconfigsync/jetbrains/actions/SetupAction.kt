@@ -6,7 +6,6 @@ import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.progress.ProgressManager
@@ -91,16 +90,23 @@ internal fun startSetup(project: Project) {
             MappingPreviewResponse::class.java,
         )
         val strategy = chooseInitialStrategy(project, preview) ?: return@runBackground
+        val sensitivePaths = preview.sensitivePaths.orEmpty()
+        val allowSensitive = sensitivePaths.isNotEmpty()
+        if (allowSensitive && !confirmSensitiveFiles(project, sensitivePaths)) return@runBackground
         indicator.text = "Creating file mapping and synchronizing…"
+        val linkArguments = mutableListOf(
+            "link", "--project", project.basePath.orEmpty(), "--repository", repositoryId,
+            "--source-path", paths.remotePath, "--target", paths.localPath,
+            "--kind", "file", "--mode", "copy", "--initial-strategy", strategy,
+        )
+        if (allowSensitive) linkArguments += "--allow-sensitive"
         LocalConfigCli.command(
             project,
-            listOf(
-                "link", "--project", project.basePath.orEmpty(), "--repository", repositoryId,
-                "--source-path", paths.remotePath, "--target", paths.localPath,
-                "--kind", "file", "--mode", "copy", "--initial-strategy", strategy,
-            ),
+            linkArguments,
         )
-        LocalConfigCli.command(project, listOf("sync", "--project", project.basePath.orEmpty()))
+        val syncArguments = mutableListOf("sync", "--project", project.basePath.orEmpty())
+        if (allowSensitive) syncArguments += "--allow-sensitive"
+        LocalConfigCli.command(project, syncArguments)
         notify(project, "${paths.localPath} is synchronized with ${selected.nameWithOwner}:${paths.remotePath}")
     }
 }
@@ -598,10 +604,3 @@ internal fun githubRepositoryId(nameWithOwner: String): String =
 
 private fun ConfiguredRepository.matches(repository: GitHubRepository): Boolean =
     type == "git" && (options.remoteUrl == repository.url || options.remoteUrl == repository.sshUrl)
-
-private fun <T> onUiThread(action: () -> T): T {
-    if (ApplicationManager.getApplication().isDispatchThread) return action()
-    val value = AtomicReference<Result<T>>()
-    ApplicationManager.getApplication().invokeAndWait { value.set(runCatching(action)) }
-    return value.get().getOrThrow()
-}

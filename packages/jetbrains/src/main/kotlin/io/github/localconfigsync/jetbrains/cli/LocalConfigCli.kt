@@ -10,7 +10,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import java.nio.charset.StandardCharsets
 
-class CliException(val code: String, override val message: String, val diagnostics: String = "") : RuntimeException(message)
+class CliException(
+    val code: String,
+    override val message: String,
+    val diagnostics: String = "",
+    val paths: List<String> = emptyList(),
+) : RuntimeException(message)
 
 object LocalConfigCli {
     private val gson = Gson()
@@ -33,7 +38,12 @@ object LocalConfigCli {
         if (output.isTimeout) throw CliException("timeout", "Local Config Sync command timed out", output.stderr)
         if (output.exitCode != 0) {
             val failure = runCatching { gson.fromJson(json, ErrorResponse::class.java) }.getOrNull()
-            throw CliException(failure?.error?.code ?: "cli_failed", failure?.error?.message ?: "Local Config Sync command failed", output.stderr)
+            throw CliException(
+                failure?.error?.code ?: "cli_failed",
+                failure?.error?.message ?: "Local Config Sync command failed",
+                output.stderr,
+                failure?.error?.details?.paths.orEmpty(),
+            )
         }
         return try {
             gson.fromJson(json, responseType)

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/li-daqian/local-config-sync/internal/core"
 )
 
 func captureStdout(t *testing.T, operation func() error) []byte {
@@ -100,6 +102,61 @@ func TestFilePreviewAndLinkJSONContract(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(repository, "project/application-dev.yml"))
 	if err != nil || string(content) != "profile: dev\n" {
 		t.Fatalf("unexpected repository file %q, %v", content, err)
+	}
+}
+
+func TestSensitiveFilePreviewAndLinkJSONContract(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	repository := filepath.Join(root, "repository")
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := exec.Command("git", "init", "--initial-branch", "main")
+	git.Dir = project
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".env.local"), []byte("TOKEN=review-me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOCAL_CONFIG_HOME", home)
+	if _, err := run([]string{"init", "--default-link-mode", "copy", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run([]string{"repository", "add", "local-folder", "--id", "personal", "--path", repository, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previewOutput := captureStdout(t, func() error {
+		_, err := run([]string{
+			"preview", "--project", project, "--repository", "personal",
+			"--source-path", "project/.env.local", "--target", ".env.local",
+			"--kind", "file", "--json",
+		})
+		return err
+	})
+	var preview struct {
+		SensitivePaths []string `json:"sensitivePaths"`
+	}
+	if err := json.Unmarshal(previewOutput, &preview); err != nil {
+		t.Fatalf("invalid sensitive preview JSON: %v\n%s", err, previewOutput)
+	}
+	if len(preview.SensitivePaths) != 2 {
+		t.Fatalf("expected sensitive paths in preview, got %#v", preview)
+	}
+
+	linkArguments := []string{
+		"link", "--project", project, "--repository", "personal",
+		"--source-path", "project/.env.local", "--target", ".env.local",
+		"--kind", "file", "--mode", "copy", "--initial-strategy", "local", "--json",
+	}
+	if _, err := run(linkArguments); err == nil || core.AsError(err).Code != core.ErrUnsafeSecretPattern {
+		t.Fatalf("expected unsafe_secret_pattern, got %v", err)
+	}
+	if _, err := run(append(linkArguments, "--allow-sensitive")); err != nil {
+		t.Fatal(err)
 	}
 }
 

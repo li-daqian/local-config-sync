@@ -234,6 +234,8 @@ local-config link \
 
 `preview` 返回 `remote_only`、`local_only`、`identical`、`conflict` 或 `missing_both`。前三种可以用 `auto` 初始化；`conflict` 必须在 diff 后显式传入 `local` 或 `remote`。该选择只建立 initial baseline，不改变后续同步的 conflict-stop 策略。
 
+`preview` 同时返回 `sensitivePaths`。`link` 在初始化 mapped file、写入 `.git/info/exclude` 或持久化 Mapping 前拒绝敏感路径；用户审查后可以显式传入 `--allow-sensitive`。该参数只对当前命令生效，不持久化降低后续同步的安全默认值。
+
 行为：
 
 - 验证 business project 是 Git repo。

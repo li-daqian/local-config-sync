@@ -215,6 +215,66 @@ func TestFileMappingInitializesFromLocalAndPushes(t *testing.T) {
 	}
 }
 
+func TestSensitiveFileMappingRequiresExplicitOverrideBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	project := initProject(t, root, "business")
+	repositoryPath := filepath.Join(root, "repository")
+	localFile := filepath.Join(project, ".env.local")
+	if err := os.WriteFile(localFile, []byte("TOKEN=review-me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(filepath.Join(root, "home"))
+	if _, err := service.Init(LinkModeCopy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Repositories.AddLocalFolder("personal", "", repositoryPath); err != nil {
+		t.Fatal(err)
+	}
+	input := LinkInput{
+		Project: project, RepositoryID: "personal",
+		SourcePath: "business/.env.local", TargetPath: ".env.local",
+		Mode: LinkModeCopy, Kind: MappingKindFile, InitialStrategy: InitialStrategyLocal,
+	}
+	preview, err := service.PreviewLink(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.State != "local_only" || len(preview.SensitivePaths) != 2 {
+		t.Fatalf("expected sensitive local-only preview, got %#v", preview)
+	}
+	if _, err := service.Link(input); err == nil {
+		t.Fatal("expected sensitive mapping to be rejected")
+	} else {
+		requireErrorCode(t, err, ErrUnsafeSecretPattern)
+	}
+	if mappings, err := service.Mappings.ForProject(project); err != nil || len(mappings) != 0 {
+		t.Fatalf("rejected link must not persist a mapping: %#v, %v", mappings, err)
+	}
+	if _, err := os.Stat(filepath.Join(repositoryPath, "business/.env.local")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected link must not create the repository file: %v", err)
+	}
+	exclude, err := os.ReadFile(filepath.Join(project, ".git/info/exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(exclude), ".env.local") {
+		t.Fatalf("rejected link must not add an exclude rule: %s", exclude)
+	}
+
+	input.AllowSensitive = true
+	if _, err := service.Link(input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(SyncOptions{Project: project}, "sync"); err == nil {
+		t.Fatal("later sync must require a fresh sensitive-file override")
+	} else {
+		requireErrorCode(t, err, ErrUnsafeSecretPattern)
+	}
+	if _, err := service.Sync(SyncOptions{Project: project, AllowSensitive: true}, "sync"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFileMappingConflictRequiresExplicitStrategy(t *testing.T) {
 	root := t.TempDir()
 	bare, seed := createRemote(t, root)

@@ -166,6 +166,7 @@ type MappingPreview struct {
 	TargetAbsolutePath string      `json:"targetAbsolutePath"`
 	SourceExists       bool        `json:"sourceExists"`
 	TargetExists       bool        `json:"targetExists"`
+	SensitivePaths     []string    `json:"sensitivePaths"`
 }
 
 type RepositoryFileList struct {

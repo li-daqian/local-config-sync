@@ -1,6 +1,11 @@
 package io.github.localconfigsync.jetbrains.cli
 
-data class ErrorPayload(val code: String = "generic_error", val message: String = "Unknown error")
+data class ErrorDetails(val paths: List<String>? = emptyList())
+data class ErrorPayload(
+    val code: String = "generic_error",
+    val message: String = "Unknown error",
+    val details: ErrorDetails? = null,
+)
 data class ErrorResponse(val ok: Boolean = false, val command: String = "unknown", val error: ErrorPayload = ErrorPayload())
 
 data class Capabilities(
@@ -91,6 +96,7 @@ data class MappingPreviewResponse(
     val targetAbsolutePath: String = "",
     val sourceExists: Boolean = false,
     val targetExists: Boolean = false,
+    val sensitivePaths: List<String>? = emptyList(),
 )
 
 data class CommandResponse(val ok: Boolean = false, val command: String = "unknown")

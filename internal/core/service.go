@@ -67,6 +67,7 @@ type LinkInput struct {
 	Kind                                          MappingKind
 	InitialStrategy                               InitialStrategy
 	ID                                            string
+	AllowSensitive                                bool
 }
 
 func normalizeMappingKind(kind MappingKind) (MappingKind, error) {
@@ -113,7 +114,12 @@ func previewFileMapping(source, target, sourcePath, targetPath string) (MappingP
 	if err != nil {
 		return MappingPreview{}, err
 	}
-	preview := MappingPreview{Kind: MappingKindFile, SourcePath: sourcePath, TargetPath: targetPath, SourceAbsolutePath: source, TargetAbsolutePath: target, SourceExists: sourceExists, TargetExists: targetExists}
+	preview := MappingPreview{
+		Kind: MappingKindFile, SourcePath: sourcePath, TargetPath: targetPath,
+		SourceAbsolutePath: source, TargetAbsolutePath: target,
+		SourceExists: sourceExists, TargetExists: targetExists,
+		SensitivePaths: SensitivePaths(sourcePath, targetPath),
+	}
 	switch {
 	case sourceExists && !targetExists:
 		preview.State = "remote_only"
@@ -267,6 +273,9 @@ func (s *Service) linkFileMapping(project ResolvedProject, input LinkInput, sour
 	if err != nil {
 		return Mapping{}, err
 	}
+	if err := AssertNoSensitive(preview.SensitivePaths, input.AllowSensitive); err != nil {
+		return Mapping{}, err
+	}
 	sourceBackup, err := backupFile(source)
 	if err != nil {
 		return Mapping{}, err
@@ -336,6 +345,17 @@ func (s *Service) Link(input LinkInput) (Mapping, error) {
 	}
 	if kind == MappingKindFile {
 		return s.linkFileMapping(project, input, source, target, mode)
+	}
+	matches, err := ScanSensitive(repository.WorkspacePath, []string{input.SourcePath})
+	if err != nil {
+		return Mapping{}, err
+	}
+	localMatches, err := ScanSensitive(project.Root, []string{input.TargetPath})
+	if err != nil {
+		return Mapping{}, err
+	}
+	if err := AssertNoSensitive(append(matches, localMatches...), input.AllowSensitive); err != nil {
+		return Mapping{}, err
 	}
 	if err := Materialize(source, target, mode, false); err != nil {
 		return Mapping{}, err
