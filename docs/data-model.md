@@ -75,6 +75,7 @@ mappings:
     sourcePath: ai-rvis-agent/config
     targetPath: config
     mode: symlink
+    kind: directory
     files:
       - application-dev.yml
     createdAt: "2026-07-14T00:00:00Z"
@@ -86,6 +87,7 @@ mappings:
 - `sourcePath` 必须是 Repository workspace 内的相对路径，不能逃逸 workspace。
 - 同一 Repository 中不同 Mapping 的 `sourcePath` 默认不能重叠。
 - Mapping 只引用 `repositoryId`，不复制 Repository 路径、URL 或凭证。
+- `kind` 为 `file` 或 `directory`；历史记录缺少该字段时按 `directory` 读取。
 
 ## Repository 运行状态
 

@@ -13,6 +13,11 @@ type MappingManager struct{ Storage *Storage }
 
 func (m *MappingManager) List() ([]Mapping, error) {
 	file, err := m.Storage.ReadMappings()
+	for index := range file.Mappings {
+		if file.Mappings[index].Kind == "" {
+			file.Mappings[index].Kind = MappingKindDirectory
+		}
+	}
 	return file.Mappings, err
 }
 
@@ -65,9 +70,40 @@ func randomSuffix() string {
 type AddMappingInput struct {
 	ID, ProjectPath, RepositoryID, SourcePath, TargetPath string
 	Mode                                                  LinkMode
+	Kind                                                  MappingKind
+}
+
+func (m *MappingManager) Validate(input AddMappingInput) error {
+	file, err := m.Storage.ReadMappings()
+	if err != nil {
+		return err
+	}
+	sourcePath, err := SafeRelativePath(input.SourcePath, "sourcePath")
+	if err != nil {
+		return err
+	}
+	targetPath, err := SafeRelativePath(input.TargetPath, "targetPath")
+	if err != nil {
+		return err
+	}
+	for _, existing := range file.Mappings {
+		if existing.RepositoryID == input.RepositoryID && overlaps(existing.SourcePath, sourcePath) {
+			return NewError(ErrInvalidArguments, "Mapping source path overlaps an existing mapping", map[string]any{"existingMappingId": existing.ID, "sourcePath": sourcePath})
+		}
+		if samePath(existing.ProjectPath, input.ProjectPath) && overlaps(existing.TargetPath, targetPath) {
+			return NewError(ErrInvalidArguments, "Mapping target path overlaps an existing mapping", map[string]any{"existingMappingId": existing.ID, "targetPath": targetPath})
+		}
+		if input.ID != "" && existing.ID == input.ID {
+			return Invalidf("Mapping id already exists: %s", input.ID)
+		}
+	}
+	return nil
 }
 
 func (m *MappingManager) Add(input AddMappingInput) (Mapping, error) {
+	if err := m.Validate(input); err != nil {
+		return Mapping{}, err
+	}
 	file, err := m.Storage.ReadMappings()
 	if err != nil {
 		return Mapping{}, err
@@ -80,14 +116,6 @@ func (m *MappingManager) Add(input AddMappingInput) (Mapping, error) {
 	if err != nil {
 		return Mapping{}, err
 	}
-	for _, existing := range file.Mappings {
-		if existing.RepositoryID == input.RepositoryID && overlaps(existing.SourcePath, sourcePath) {
-			return Mapping{}, NewError(ErrInvalidArguments, "Mapping source path overlaps an existing mapping", map[string]any{"existingMappingId": existing.ID, "sourcePath": sourcePath})
-		}
-		if samePath(existing.ProjectPath, input.ProjectPath) && overlaps(existing.TargetPath, targetPath) {
-			return Mapping{}, NewError(ErrInvalidArguments, "Mapping target path overlaps an existing mapping", map[string]any{"existingMappingId": existing.ID, "targetPath": targetPath})
-		}
-	}
 	projectPath, _ := filepath.Abs(input.ProjectPath)
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
@@ -99,7 +127,11 @@ func (m *MappingManager) Add(input AddMappingInput) (Mapping, error) {
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	mapping := Mapping{ID: id, ProjectPath: projectPath, ProjectName: filepath.Base(projectPath), RepositoryID: input.RepositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: input.Mode, CreatedAt: now, UpdatedAt: now}
+	kind := input.Kind
+	if kind == "" {
+		kind = MappingKindDirectory
+	}
+	mapping := Mapping{ID: id, ProjectPath: projectPath, ProjectName: filepath.Base(projectPath), RepositoryID: input.RepositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: input.Mode, Kind: kind, CreatedAt: now, UpdatedAt: now}
 	file.Mappings = append(file.Mappings, mapping)
 	if err := m.Storage.WriteMappings(file); err != nil {
 		return Mapping{}, err

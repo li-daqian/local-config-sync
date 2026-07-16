@@ -99,14 +99,13 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 1. 用户在 IDE 中打开业务项目。
 2. 插件检测当前项目路径。
-3. 用户点击 `Local Config Sync: Setup`。
-4. 选择或创建一个配置仓库，例如 Git repo 或 local folder。
-5. 选择仓库内目录，例如 `ai-rvis-agent/config/`。
-6. 选择当前项目目标目录，例如 `config/`。
-7. 工具拉取配置文件到业务项目。
-8. 工具将这些路径写入业务项目 `.git/info/exclude`。
-9. 用户修改业务项目内配置文件。
-10. 工具手动或自动同步到所选仓库。
+3. 用户点击 `Local Config Sync: Setup` 并选择 GitHub。
+4. 插件复用 `gh auth` 完成认证，并列出当前账号名下的 public/private Repository。
+5. 选择 Repository，再选择已有远端文件或本地文件。
+6. 选择文件在另一端的目标路径。
+7. 只有本地或只有远端文件时，工具自动采用已有一侧初始化；两侧文件不同时先展示 diff，再由用户明确选择初始版本。
+8. 工具建立 file mapping，并将项目文件路径写入业务项目 `.git/info/exclude`。
+9. 用户修改业务项目内配置文件，点击 `Sync Now` 安全同步。
 
 ## MVP 命令草案
 
@@ -165,13 +164,30 @@ local-config link \
   --target config \
   --mode symlink
 
+# 单文件首次同步；双方都存在且不同时必须显式选择 local 或 remote
+local-config preview \
+  --project . \
+  --repository personal \
+  --source-path ai-rvis-agent/application-dev.yml \
+  --target src/main/resources/application-dev.yml \
+  --kind file
+
+local-config link \
+  --project . \
+  --repository personal \
+  --source-path ai-rvis-agent/application-dev.yml \
+  --target src/main/resources/application-dev.yml \
+  --kind file \
+  --mode copy \
+  --initial-strategy local
+
 local-config status --project /path/to/business-project
 local-config sync --project /path/to/business-project
 ```
 
 插件对应提供：
 
-- `Setup Local Config Sync`：创建 Git Repository 或使用已有 Repository，并建立 mapping。
+- `Setup Local Config Sync`：GitHub 认证、Repository/file picker、initial diff 和 file mapping。
 - `Authenticate Local Config Git Repository`：验证 `auto` / SSH / credential helper / `gh`。
 - `Sync Local Config Now`：background task 中执行安全 sync。
 - Status Bar Widget：显示 `Synced` / `Pending` / `Conflict` / `Failed` 等 CLI 状态。

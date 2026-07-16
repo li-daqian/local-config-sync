@@ -46,6 +46,8 @@
 - 当前项目出现配置文件。
 - 业务项目 `git status` 不显示这些本地配置为待提交。
 - 工具能展示当前映射状态。
+- GitHub Setup 可以复用 `gh auth`，并列出账号名下的 public/private Repository。
+- 支持直接建立单文件 mapping；本地与远端文件不同时先展示 diff，并要求用户明确选择初始版本。
 
 ### 修改后同步
 
@@ -76,6 +78,8 @@
 - 工具停止自动同步。
 - 展示冲突文件列表。
 - 提供打开冲突文件、Repository workspace 或查看 Driver-specific 解决建议的入口。
+
+首次创建 mapping 时的“两侧文件已存在”不沿用自动同步：用户查看 diff 后可以显式选择本地或远端作为 initial baseline。mapping 建立后的并发修改仍必须停止，不得自动覆盖。
 
 ## MVP 功能清单
 

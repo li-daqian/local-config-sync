@@ -1,6 +1,8 @@
 package core
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -11,12 +13,31 @@ var sensitiveSuffixes = []string{".pem", ".key", ".p12", ".pfx"}
 func ScanSensitive(root string, scopes []string) ([]string, error) {
 	matches := []string{}
 	for _, scope := range scopes {
-		files, err := ListFiles(filepath.Join(root, filepath.FromSlash(scope)))
-		if err != nil {
-			return nil, err
+		scopePath := filepath.Join(root, filepath.FromSlash(scope))
+		info, statErr := os.Stat(scopePath)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			return nil, statErr
+		}
+		files := []string{}
+		if info.Mode().IsRegular() {
+			files = append(files, "")
+		} else {
+			var err error
+			files, err = ListFiles(scopePath)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, file := range files {
-			name := strings.ToLower(filepath.Base(file))
+			name := strings.ToLower(filepath.Base(scope))
+			path := scope
+			if file != "" {
+				name = strings.ToLower(filepath.Base(file))
+				path = strings.TrimSuffix(scope, "/") + "/" + file
+			}
 			sensitive := sensitiveExact[name] || strings.HasPrefix(name, ".env.")
 			for _, suffix := range sensitiveSuffixes {
 				if strings.HasSuffix(name, suffix) {
@@ -24,7 +45,7 @@ func ScanSensitive(root string, scopes []string) ([]string, error) {
 				}
 			}
 			if sensitive {
-				matches = append(matches, strings.TrimSuffix(scope, "/")+"/"+file)
+				matches = append(matches, path)
 			}
 		}
 	}

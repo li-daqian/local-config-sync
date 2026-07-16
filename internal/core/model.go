@@ -7,6 +7,21 @@ const (
 	LinkModeCopy    LinkMode = "copy"
 )
 
+type MappingKind string
+
+const (
+	MappingKindDirectory MappingKind = "directory"
+	MappingKindFile      MappingKind = "file"
+)
+
+type InitialStrategy string
+
+const (
+	InitialStrategyAuto   InitialStrategy = "auto"
+	InitialStrategyLocal  InitialStrategy = "local"
+	InitialStrategyRemote InitialStrategy = "remote"
+)
+
 type GlobalConfig struct {
 	Version             int            `yaml:"version" json:"version"`
 	DefaultRepositoryID string         `yaml:"defaultRepositoryId,omitempty" json:"defaultRepositoryId,omitempty"`
@@ -63,15 +78,16 @@ type RepositoryRegistryFile struct {
 }
 
 type Mapping struct {
-	ID           string   `yaml:"id" json:"id"`
-	ProjectPath  string   `yaml:"projectPath" json:"projectPath"`
-	ProjectName  string   `yaml:"projectName" json:"projectName"`
-	RepositoryID string   `yaml:"repositoryId" json:"repositoryId"`
-	SourcePath   string   `yaml:"sourcePath" json:"sourcePath"`
-	TargetPath   string   `yaml:"targetPath" json:"targetPath"`
-	Mode         LinkMode `yaml:"mode" json:"mode"`
-	CreatedAt    string   `yaml:"createdAt" json:"createdAt"`
-	UpdatedAt    string   `yaml:"updatedAt" json:"updatedAt"`
+	ID           string      `yaml:"id" json:"id"`
+	ProjectPath  string      `yaml:"projectPath" json:"projectPath"`
+	ProjectName  string      `yaml:"projectName" json:"projectName"`
+	RepositoryID string      `yaml:"repositoryId" json:"repositoryId"`
+	SourcePath   string      `yaml:"sourcePath" json:"sourcePath"`
+	TargetPath   string      `yaml:"targetPath" json:"targetPath"`
+	Mode         LinkMode    `yaml:"mode" json:"mode"`
+	Kind         MappingKind `yaml:"kind,omitempty" json:"kind"`
+	CreatedAt    string      `yaml:"createdAt" json:"createdAt"`
+	UpdatedAt    string      `yaml:"updatedAt" json:"updatedAt"`
 }
 
 type MappingRegistryFile struct {
@@ -131,13 +147,38 @@ type RepositorySummary struct {
 }
 
 type MappingSummary struct {
-	ID                string   `json:"id"`
-	RepositoryID      string   `json:"repositoryId"`
-	SourcePath        string   `json:"sourcePath"`
-	TargetPath        string   `json:"targetPath"`
-	Mode              LinkMode `json:"mode"`
-	MappedFiles       []string `json:"mappedFiles"`
-	ExcludeConfigured bool     `json:"excludeConfigured"`
+	ID                string      `json:"id"`
+	RepositoryID      string      `json:"repositoryId"`
+	SourcePath        string      `json:"sourcePath"`
+	TargetPath        string      `json:"targetPath"`
+	Mode              LinkMode    `json:"mode"`
+	Kind              MappingKind `json:"kind"`
+	MappedFiles       []string    `json:"mappedFiles"`
+	ExcludeConfigured bool        `json:"excludeConfigured"`
+}
+
+type MappingPreview struct {
+	State              string      `json:"state"`
+	Kind               MappingKind `json:"kind"`
+	SourcePath         string      `json:"sourcePath"`
+	TargetPath         string      `json:"targetPath"`
+	SourceAbsolutePath string      `json:"sourceAbsolutePath"`
+	TargetAbsolutePath string      `json:"targetAbsolutePath"`
+	SourceExists       bool        `json:"sourceExists"`
+	TargetExists       bool        `json:"targetExists"`
+}
+
+type RepositoryFileList struct {
+	RepositoryID string   `json:"repositoryId"`
+	Files        []string `json:"files"`
+}
+
+type GitHubRepository struct {
+	NameWithOwner string `json:"nameWithOwner"`
+	Private       bool   `json:"private"`
+	SSHURL        string `json:"sshUrl"`
+	URL           string `json:"url"`
+	DefaultBranch string `json:"defaultBranch"`
 }
 
 type SyncResult struct {

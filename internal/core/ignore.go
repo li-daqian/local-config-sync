@@ -10,7 +10,11 @@ import (
 const excludeMarker = "# local-config-sync"
 
 func excludeRule(targetPath string) string {
-	return "/" + strings.TrimPrefix(strings.ReplaceAll(targetPath, "\\", "/"), "/") + "/"
+	return "/" + strings.Trim(strings.ReplaceAll(targetPath, "\\", "/"), "/")
+}
+
+func legacyExcludeRule(targetPath string) string {
+	return excludeRule(targetPath) + "/"
 }
 
 func readOptional(path string) ([]byte, error) {
@@ -33,7 +37,7 @@ func AddExclude(path, targetPath string) error {
 	rule := excludeRule(targetPath)
 	lines := strings.Split(strings.ReplaceAll(existing, "\r\n", "\n"), "\n")
 	for _, line := range lines {
-		if line == rule {
+		if line == rule || line == legacyExcludeRule(targetPath) {
 			return nil
 		}
 	}
@@ -58,9 +62,10 @@ func RemoveExclude(path, targetPath string) error {
 		return err
 	}
 	rule := excludeRule(targetPath)
+	legacyRule := legacyExcludeRule(targetPath)
 	var lines []string
 	for _, line := range strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n") {
-		if line != rule {
+		if line != rule && line != legacyRule {
 			lines = append(lines, line)
 		}
 	}
@@ -92,8 +97,9 @@ func HasExclude(path, targetPath string) (bool, error) {
 		return false, err
 	}
 	rule := excludeRule(targetPath)
+	legacyRule := legacyExcludeRule(targetPath)
 	for _, line := range strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n") {
-		if line == rule {
+		if line == rule || line == legacyRule {
 			return true, nil
 		}
 	}

@@ -78,16 +78,18 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 
 ## Setup Wizard
 
-步骤：
+当前 GitHub file mapping 流程：
 
-1. 检查 CLI 是否安装。
-2. 检查当前项目是否是 Git repo。
-3. 选择或创建 Repository 实例。
-4. 选择 Repository 内的 source path。
-5. 选择 target path。
-6. 选择 link mode：`symlink` 或 `copy`。
-7. 预览将写入的文件和 `.git/info/exclude` 规则。
-8. 执行 `local-config link`。
+1. 检查 CLI 和当前 Git project。
+2. 选择 GitHub provider；验证 `gh auth`，未登录时启动 GitHub CLI browser flow。
+3. 展示当前账号名下的 public/private Repository 并注册为普通 Git Repository。
+4. 选择 Repository 内已有文件，或从项目内选择本地文件创建远端路径。
+5. 选择/输入项目内的 target file path。
+6. 调用 `preview` 判断 `remote_only`、`local_only`、`identical` 或 `conflict`。
+7. `conflict` 时用 IntelliJ diff viewer 展示两侧内容，再由用户明确选择 initial version。
+8. 以 `kind=file`、`mode=copy` 建立 mapping，写入 `.git/info/exclude` 并执行首次安全 sync。
+
+GitHub 只是 discovery/auth 入口，不在 Kotlin 中实现 Git clone、commit、push 或冲突检测。
 
 ## 状态刷新
 

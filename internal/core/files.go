@@ -97,6 +97,21 @@ func SnapshotDirectory(root, prefix string) (map[string]FileSnapshot, error) {
 	return result, nil
 }
 
+func SnapshotPath(path, prefix string, kind MappingKind) (map[string]FileSnapshot, error) {
+	if kind != MappingKindFile {
+		return SnapshotDirectory(path, prefix)
+	}
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]FileSnapshot{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(content)
+	return map[string]FileSnapshot{prefix: {SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))}}, nil
+}
+
 func SnapshotsEqual(a FileSnapshot, aOK bool, b FileSnapshot, bOK bool) bool {
 	return aOK == bOK && (!aOK || (a.SHA256 == b.SHA256 && a.Size == b.Size && a.Deleted == b.Deleted))
 }
@@ -149,6 +164,38 @@ func copyFile(source, target string, mode os.FileMode) error {
 		return inputCloseErr
 	}
 	return outputCloseErr
+}
+
+func CopyFileReplace(source, target string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return NewError(ErrFilesystemFailed, "Mapped file is not a regular file: "+source, map[string]any{"path": source})
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".local-config-copy-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	_ = os.Remove(temporaryPath)
+	if err := copyFile(source, temporaryPath, info.Mode().Perm()); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	if err := atomicReplace(temporaryPath, target); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
 }
 
 func mapsEqual(a, b map[string]FileSnapshot) bool {

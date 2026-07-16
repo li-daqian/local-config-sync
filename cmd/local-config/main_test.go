@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -28,6 +29,65 @@ func captureStdout(t *testing.T, operation func() error) []byte {
 		t.Fatal(readErr)
 	}
 	return content
+}
+
+func TestFilePreviewAndLinkJSONContract(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	repository := filepath.Join(root, "repository")
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(filepath.Join(project, "src/main/resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := exec.Command("git", "init", "--initial-branch", "main")
+	git.Dir = project
+	if output, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, output)
+	}
+	localFile := filepath.Join(project, "src/main/resources/application-dev.yml")
+	if err := os.WriteFile(localFile, []byte("profile: dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOCAL_CONFIG_HOME", home)
+	if _, err := run([]string{"init", "--default-link-mode", "copy", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run([]string{"repository", "add", "local-folder", "--id", "personal", "--path", repository, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previewOutput := captureStdout(t, func() error {
+		_, err := run([]string{
+			"preview", "--project", project, "--repository", "personal",
+			"--source-path", "project/application-dev.yml",
+			"--target", "src/main/resources/application-dev.yml", "--kind", "file", "--json",
+		})
+		return err
+	})
+	var preview struct {
+		OK    bool   `json:"ok"`
+		State string `json:"state"`
+		Kind  string `json:"kind"`
+	}
+	if err := json.Unmarshal(previewOutput, &preview); err != nil {
+		t.Fatalf("invalid preview JSON: %v\n%s", err, previewOutput)
+	}
+	if !preview.OK || preview.State != "local_only" || preview.Kind != "file" {
+		t.Fatalf("unexpected preview response: %#v", preview)
+	}
+
+	if _, err := run([]string{
+		"link", "--project", project, "--repository", "personal",
+		"--source-path", "project/application-dev.yml",
+		"--target", "src/main/resources/application-dev.yml", "--kind", "file",
+		"--mode", "copy", "--initial-strategy", "local", "--json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(repository, "project/application-dev.yml"))
+	if err != nil || string(content) != "profile: dev\n" {
+		t.Fatalf("unexpected repository file %q, %v", content, err)
+	}
 }
 
 func TestInitAndRepositoryJSONContract(t *testing.T) {

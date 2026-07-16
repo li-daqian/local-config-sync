@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -8,6 +9,37 @@ import (
 	"strings"
 	"time"
 )
+
+func (s *Service) RepositoryFiles(repositoryID string) (RepositoryFileList, error) {
+	repository, err := s.Repositories.Get(repositoryID)
+	if err != nil {
+		return RepositoryFileList{}, err
+	}
+	driver := s.Repositories.Driver(repository)
+	if err := WithRepositoryLock(filepath.Join(s.Paths.Locks, repository.ID+".lock"), func() error {
+		if err := driver.Prepare(repository); err != nil {
+			return err
+		}
+		status, err := driver.Inspect(DriverContext{Repository: repository})
+		if err != nil {
+			return err
+		}
+		if status.RemoteChanged && len(status.LocalChanges) > 0 {
+			return NewError(ErrConflict, "Cannot refresh repository files while the managed workspace has local changes", map[string]any{"repositoryId": repository.ID, "paths": status.LocalChanges})
+		}
+		if status.RemoteChanged {
+			_, err = driver.Pull(DriverContext{Repository: repository})
+		}
+		return err
+	}); err != nil {
+		return RepositoryFileList{}, err
+	}
+	files, err := ListFiles(repository.WorkspacePath)
+	if err != nil {
+		return RepositoryFileList{}, err
+	}
+	return RepositoryFileList{RepositoryID: repositoryID, Files: files}, nil
+}
 
 type Service struct {
 	Paths        AppPaths
@@ -32,7 +64,239 @@ func (s *Service) Init(mode LinkMode) (GlobalConfig, error) {
 type LinkInput struct {
 	Project, RepositoryID, SourcePath, TargetPath string
 	Mode                                          LinkMode
+	Kind                                          MappingKind
+	InitialStrategy                               InitialStrategy
 	ID                                            string
+}
+
+func normalizeMappingKind(kind MappingKind) (MappingKind, error) {
+	if kind == "" {
+		return MappingKindDirectory, nil
+	}
+	if kind != MappingKindDirectory && kind != MappingKindFile {
+		return "", Invalidf("mapping kind must be file or directory")
+	}
+	return kind, nil
+}
+
+func fileExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, NewError(ErrFilesystemFailed, "File mapping path is not a regular file: "+path, map[string]any{"path": path})
+	}
+	return true, nil
+}
+
+func ensureTargetIsUntracked(projectRoot, targetPath string) error {
+	result, err := RunProcess("git", []string{"ls-files", "--error-unmatch", "--", targetPath}, projectRoot, nil, true)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode == 0 {
+		return NewError(ErrInvalidArguments, "Mapped project file is already tracked by Git; remove it from the business repository index before setup", map[string]any{"targetPath": targetPath})
+	}
+	return nil
+}
+
+func previewFileMapping(source, target, sourcePath, targetPath string) (MappingPreview, error) {
+	sourceExists, err := fileExists(source)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	targetExists, err := fileExists(target)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	preview := MappingPreview{Kind: MappingKindFile, SourcePath: sourcePath, TargetPath: targetPath, SourceAbsolutePath: source, TargetAbsolutePath: target, SourceExists: sourceExists, TargetExists: targetExists}
+	switch {
+	case sourceExists && !targetExists:
+		preview.State = "remote_only"
+	case !sourceExists && targetExists:
+		preview.State = "local_only"
+	case !sourceExists && !targetExists:
+		preview.State = "missing_both"
+	default:
+		sourceSnapshot, err := SnapshotPath(source, sourcePath, MappingKindFile)
+		if err != nil {
+			return MappingPreview{}, err
+		}
+		targetSnapshot, err := SnapshotPath(target, sourcePath, MappingKindFile)
+		if err != nil {
+			return MappingPreview{}, err
+		}
+		if mapsEqual(sourceSnapshot, targetSnapshot) {
+			preview.State = "identical"
+		} else {
+			preview.State = "conflict"
+		}
+	}
+	return preview, nil
+}
+
+func (s *Service) PreviewLink(input LinkInput) (MappingPreview, error) {
+	project, err := ResolveProject(input.Project)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	repository, err := s.Repositories.Get(input.RepositoryID)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	if err := s.Repositories.Driver(repository).Prepare(repository); err != nil {
+		return MappingPreview{}, err
+	}
+	kind, err := normalizeMappingKind(input.Kind)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	if kind != MappingKindFile {
+		return MappingPreview{}, Invalidf("link preview currently supports file mappings")
+	}
+	source, err := ResolveInside(repository.WorkspacePath, input.SourcePath)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	target, err := ResolveInside(project.Root, input.TargetPath)
+	if err != nil {
+		return MappingPreview{}, err
+	}
+	return previewFileMapping(source, target, input.SourcePath, input.TargetPath)
+}
+
+func initializeFileMapping(source, target string, mode LinkMode, strategy InitialStrategy, preview MappingPreview) error {
+	if strategy == "" {
+		strategy = InitialStrategyAuto
+	}
+	if strategy != InitialStrategyAuto && strategy != InitialStrategyLocal && strategy != InitialStrategyRemote {
+		return Invalidf("initial strategy must be auto, local, or remote")
+	}
+	if preview.State == "missing_both" {
+		return NewError(ErrInvalidArguments, "Neither the local nor repository file exists", map[string]any{"sourcePath": preview.SourcePath, "targetPath": preview.TargetPath})
+	}
+	if preview.State == "conflict" && strategy == InitialStrategyAuto {
+		return NewError(ErrConflict, "Local and repository files differ; choose an initial strategy after reviewing the diff", map[string]any{"sourcePath": preview.SourcePath, "targetPath": preview.TargetPath, "sourceAbsolutePath": preview.SourceAbsolutePath, "targetAbsolutePath": preview.TargetAbsolutePath})
+	}
+	winner := strategy
+	if winner == InitialStrategyAuto {
+		if preview.State == "local_only" {
+			winner = InitialStrategyLocal
+		} else {
+			winner = InitialStrategyRemote
+		}
+	}
+	if winner == InitialStrategyLocal && !preview.TargetExists {
+		return Invalidf("local initial strategy requires an existing local file")
+	}
+	if winner == InitialStrategyRemote && !preview.SourceExists {
+		return Invalidf("remote initial strategy requires an existing repository file")
+	}
+	if winner == InitialStrategyLocal {
+		if err := CopyFileReplace(target, source); err != nil {
+			return err
+		}
+	}
+	if mode == LinkModeSymlink {
+		return MaterializeFile(source, target, mode, preview.TargetExists)
+	}
+	if winner == InitialStrategyRemote {
+		return MaterializeFile(source, target, mode, preview.TargetExists)
+	}
+	return nil
+}
+
+type fileBackup struct {
+	path, temporary string
+	existed         bool
+}
+
+func backupFile(path string) (fileBackup, error) {
+	exists, err := fileExists(path)
+	if err != nil {
+		return fileBackup{}, err
+	}
+	backup := fileBackup{path: path, existed: exists}
+	if !exists {
+		return backup, nil
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".local-config-backup-*")
+	if err != nil {
+		return fileBackup{}, err
+	}
+	backup.temporary = temporary.Name()
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(backup.temporary)
+		return fileBackup{}, err
+	}
+	if err := CopyFileReplace(path, backup.temporary); err != nil {
+		_ = os.Remove(backup.temporary)
+		return fileBackup{}, err
+	}
+	return backup, nil
+}
+
+func (backup fileBackup) restore() {
+	if backup.existed {
+		_ = CopyFileReplace(backup.temporary, backup.path)
+	} else {
+		_ = os.Remove(backup.path)
+	}
+	backup.cleanup()
+}
+
+func (backup fileBackup) cleanup() {
+	if backup.temporary != "" {
+		_ = os.Remove(backup.temporary)
+	}
+}
+
+func (s *Service) linkFileMapping(project ResolvedProject, input LinkInput, source, target string, mode LinkMode) (Mapping, error) {
+	if err := ensureTargetIsUntracked(project.Root, input.TargetPath); err != nil {
+		return Mapping{}, err
+	}
+	mappingInput := AddMappingInput{ID: input.ID, ProjectPath: project.Root, RepositoryID: input.RepositoryID, SourcePath: input.SourcePath, TargetPath: input.TargetPath, Mode: mode, Kind: MappingKindFile}
+	if err := s.Mappings.Validate(mappingInput); err != nil {
+		return Mapping{}, err
+	}
+	preview, err := previewFileMapping(source, target, input.SourcePath, input.TargetPath)
+	if err != nil {
+		return Mapping{}, err
+	}
+	sourceBackup, err := backupFile(source)
+	if err != nil {
+		return Mapping{}, err
+	}
+	targetBackup, err := backupFile(target)
+	if err != nil {
+		sourceBackup.cleanup()
+		return Mapping{}, err
+	}
+	rollback := func() {
+		sourceBackup.restore()
+		targetBackup.restore()
+	}
+	if err := initializeFileMapping(source, target, mode, input.InitialStrategy, preview); err != nil {
+		rollback()
+		return Mapping{}, err
+	}
+	if err := AddExclude(project.ExcludePath, input.TargetPath); err != nil {
+		rollback()
+		return Mapping{}, err
+	}
+	mapping, err := s.Mappings.Add(mappingInput)
+	if err != nil {
+		_ = RemoveExclude(project.ExcludePath, input.TargetPath)
+		rollback()
+		return Mapping{}, err
+	}
+	sourceBackup.cleanup()
+	targetBackup.cleanup()
+	return mapping, nil
 }
 
 func (s *Service) Link(input LinkInput) (Mapping, error) {
@@ -66,6 +330,13 @@ func (s *Service) Link(input LinkInput) (Mapping, error) {
 		}
 		mode = config.DefaultLinkMode
 	}
+	kind, err := normalizeMappingKind(input.Kind)
+	if err != nil {
+		return Mapping{}, err
+	}
+	if kind == MappingKindFile {
+		return s.linkFileMapping(project, input, source, target, mode)
+	}
 	if err := Materialize(source, target, mode, false); err != nil {
 		return Mapping{}, err
 	}
@@ -73,7 +344,7 @@ func (s *Service) Link(input LinkInput) (Mapping, error) {
 		_ = os.RemoveAll(target)
 		return Mapping{}, err
 	}
-	mapping, err := s.Mappings.Add(AddMappingInput{ID: input.ID, ProjectPath: project.Root, RepositoryID: input.RepositoryID, SourcePath: input.SourcePath, TargetPath: input.TargetPath, Mode: mode})
+	mapping, err := s.Mappings.Add(AddMappingInput{ID: input.ID, ProjectPath: project.Root, RepositoryID: input.RepositoryID, SourcePath: input.SourcePath, TargetPath: input.TargetPath, Mode: mode, Kind: kind})
 	if err != nil {
 		_ = os.RemoveAll(target)
 		return Mapping{}, err
@@ -96,7 +367,7 @@ func (s *Service) Unlink(projectPath string, keepFiles, keepExclude bool) ([]Map
 		if err != nil {
 			return nil, err
 		}
-		if err := RemoveMaterialized(target, mapping.Mode, keepFiles); err != nil {
+		if err := RemoveMappedPath(target, mapping.Mode, mapping.Kind, keepFiles); err != nil {
 			return nil, err
 		}
 		if !keepExclude {
@@ -220,14 +491,18 @@ func (s *Service) reconcileCopiesFromWorkspace(mappings []Mapping, state Reposit
 		if err != nil {
 			return err
 		}
-		targetSnapshot, err := SnapshotDirectory(target, mapping.SourcePath)
+		targetSnapshot, err := SnapshotPath(target, mapping.SourcePath, mapping.Kind)
 		if err != nil {
 			return err
 		}
 		if snapshotChanged(targetSnapshot, state.Files, mapping.SourcePath) {
 			return NewError(ErrConflict, "Copy target has local changes while repository changed", map[string]any{"mappingId": mapping.ID})
 		}
-		if err := Materialize(source, target, LinkModeCopy, true); err != nil {
+		if mapping.Kind == MappingKindFile {
+			if err := CopyFileReplace(source, target); err != nil {
+				return err
+			}
+		} else if err := Materialize(source, target, LinkModeCopy, true); err != nil {
 			return err
 		}
 	}
@@ -251,11 +526,11 @@ func (s *Service) reconcileCopiesToWorkspace(mappings []Mapping, state Repositor
 		if err != nil {
 			return err
 		}
-		workspaceSnapshot, err := SnapshotDirectory(source, mapping.SourcePath)
+		workspaceSnapshot, err := SnapshotPath(source, mapping.SourcePath, mapping.Kind)
 		if err != nil {
 			return err
 		}
-		targetSnapshot, err := SnapshotDirectory(target, mapping.SourcePath)
+		targetSnapshot, err := SnapshotPath(target, mapping.SourcePath, mapping.Kind)
 		if err != nil {
 			return err
 		}
@@ -265,7 +540,11 @@ func (s *Service) reconcileCopiesToWorkspace(mappings []Mapping, state Repositor
 			return NewError(ErrConflict, "Both copy target and repository changed", map[string]any{"mappingId": mapping.ID})
 		}
 		if locallyChanged {
-			if err := Materialize(target, source, LinkModeCopy, true); err != nil {
+			if mapping.Kind == MappingKindFile {
+				if err := CopyFileReplace(target, source); err != nil {
+					return err
+				}
+			} else if err := Materialize(target, source, LinkModeCopy, true); err != nil {
 				return err
 			}
 		}
@@ -287,7 +566,7 @@ func (s *Service) updateState(repository Repository, mappings []Mapping, state R
 		if err != nil {
 			return state, err
 		}
-		snapshot, err := SnapshotDirectory(source, mapping.SourcePath)
+		snapshot, err := SnapshotPath(source, mapping.SourcePath, mapping.Kind)
 		if err != nil {
 			return state, err
 		}
@@ -439,18 +718,27 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 		if err != nil {
 			return StatusResult{}, err
 		}
-		files, err := ListFiles(target)
-		if err != nil {
-			return StatusResult{}, err
-		}
-		for index := range files {
-			files[index] = strings.TrimSuffix(mapping.TargetPath, "/") + "/" + files[index]
+		files := []string{}
+		if mapping.Kind == MappingKindFile {
+			if exists, err := fileExists(target); err != nil {
+				return StatusResult{}, err
+			} else if exists {
+				files = append(files, mapping.TargetPath)
+			}
+		} else {
+			files, err = ListFiles(target)
+			if err != nil {
+				return StatusResult{}, err
+			}
+			for index := range files {
+				files[index] = strings.TrimSuffix(mapping.TargetPath, "/") + "/" + files[index]
+			}
 		}
 		excluded, err := HasExclude(project.ExcludePath, mapping.TargetPath)
 		if err != nil {
 			return StatusResult{}, err
 		}
-		result.Mappings = append(result.Mappings, MappingSummary{ID: mapping.ID, RepositoryID: mapping.RepositoryID, SourcePath: mapping.SourcePath, TargetPath: mapping.TargetPath, Mode: mapping.Mode, MappedFiles: files, ExcludeConfigured: excluded})
+		result.Mappings = append(result.Mappings, MappingSummary{ID: mapping.ID, RepositoryID: mapping.RepositoryID, SourcePath: mapping.SourcePath, TargetPath: mapping.TargetPath, Mode: mapping.Mode, Kind: mapping.Kind, MappedFiles: files, ExcludeConfigured: excluded})
 	}
 	lastTimes := []string{}
 	for _, repository := range result.Repositories {

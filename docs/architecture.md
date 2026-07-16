@@ -108,6 +108,7 @@ JetBrains 插件同时内置 `linux`、`darwin`、`windows` 的 `amd64` / `arm64
 - 保存业务项目和 Repository `sourcePath` 的映射。
 - 支持多个业务项目。
 - 支持多个 Repository 实例，以及同一 Repository 下多个非重叠项目目录。
+- mapping 明确记录 `kind=file|directory`；旧 mapping 缺少该字段时按 `directory` 读取。
 
 ### Repository Registry
 

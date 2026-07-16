@@ -121,7 +121,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
                 if (response.mappings.isEmpty()) {
                     content.add(section("Get started", listOf(
                         "No local configuration mapping is registered for this project.",
-                        "Choose Setup to connect a Git or local-folder Repository and select the project target path.",
+                        "Choose Setup to authenticate with GitHub, select a Repository, and map a local or remote file.",
                     ), action = JButton("Set Up This Project").apply { addActionListener { startSetup(project) } }))
                 } else {
                     response.repositories.forEach { content.add(repositorySection(it)) }

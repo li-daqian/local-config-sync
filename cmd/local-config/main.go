@@ -113,9 +113,11 @@ Synchronize project-local overlay configuration through managed repositories.
 
 Commands:
   init
+  provider github <auth|repositories>
   repository add <git|local-folder>
-  repository <list|show|doctor|auth|remove>
-  link
+  repository <list|show|files|doctor|auth|remove>
+  preview
+  link [--kind file|directory] [--initial-strategy auto|local|remote]
   pull | push | sync
   status
   doctor
@@ -155,8 +157,39 @@ func run(rawArgs []string) (activeCommand string, err error) {
 		return activeCommand, success(activeCommand, map[string]any{"home": service.Paths.Home, "config": config}, jsonOutput)
 	case "repository":
 		return runRepository(service, args[1:], jsonOutput)
+	case "provider":
+		return runProvider(args[1:], jsonOutput)
+	case "preview":
+		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--repository": true, "--source-path": true, "--target": true, "--kind": true}, map[string]bool{})
+		if err != nil {
+			return activeCommand, err
+		}
+		repositoryID, err := required(parsed.Options, "--repository")
+		if err != nil {
+			return activeCommand, err
+		}
+		sourcePath, err := required(parsed.Options, "--source-path")
+		if err != nil {
+			return activeCommand, err
+		}
+		targetPath, err := required(parsed.Options, "--target")
+		if err != nil {
+			return activeCommand, err
+		}
+		project := parsed.Options["--project"]
+		if project == "" {
+			project = "."
+		}
+		preview, err := service.PreviewLink(core.LinkInput{Project: project, RepositoryID: repositoryID, SourcePath: sourcePath, TargetPath: targetPath, Kind: core.MappingKind(parsed.Options["--kind"])})
+		if err != nil {
+			return activeCommand, err
+		}
+		content, _ := json.Marshal(preview)
+		payload := map[string]any{}
+		_ = json.Unmarshal(content, &payload)
+		return activeCommand, success(activeCommand, payload, jsonOutput)
 	case "link":
-		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--repository": true, "--source-path": true, "--target": true, "--mode": true, "--id": true}, map[string]bool{})
+		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--repository": true, "--source-path": true, "--target": true, "--mode": true, "--kind": true, "--initial-strategy": true, "--id": true}, map[string]bool{})
 		if err != nil {
 			return activeCommand, err
 		}
@@ -180,7 +213,9 @@ func run(rawArgs []string) (activeCommand string, err error) {
 		if mode != "" && mode != core.LinkModeSymlink && mode != core.LinkModeCopy {
 			return activeCommand, core.Invalidf("--mode must be symlink or copy")
 		}
-		mapping, err := service.Link(core.LinkInput{Project: project, RepositoryID: repositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: mode, ID: parsed.Options["--id"]})
+		kind := core.MappingKind(parsed.Options["--kind"])
+		strategy := core.InitialStrategy(parsed.Options["--initial-strategy"])
+		mapping, err := service.Link(core.LinkInput{Project: project, RepositoryID: repositoryID, SourcePath: sourcePath, TargetPath: targetPath, Mode: mode, Kind: kind, InitialStrategy: strategy, ID: parsed.Options["--id"]})
 		if err != nil {
 			return activeCommand, err
 		}
@@ -327,7 +362,7 @@ func runRepository(service *core.Service, args []string, jsonOutput bool) (strin
 			safe = append(safe, core.SanitizeRepository(repository))
 		}
 		return active, success(active, map[string]any{"repositories": safe}, jsonOutput)
-	case "show", "doctor", "remove":
+	case "show", "files", "doctor", "remove":
 		parsed, err := parseArguments(args[1:], map[string]bool{}, map[string]bool{})
 		if err != nil {
 			return active, err
@@ -342,6 +377,13 @@ func runRepository(service *core.Service, args []string, jsonOutput bool) (strin
 				return active, err
 			}
 			return active, success(active, map[string]any{"repository": core.SanitizeRepository(repository)}, jsonOutput)
+		}
+		if args[0] == "files" {
+			files, err := service.RepositoryFiles(id)
+			if err != nil {
+				return active, err
+			}
+			return active, success(active, map[string]any{"repositoryId": files.RepositoryID, "files": files.Files}, jsonOutput)
 		}
 		if args[0] == "doctor" {
 			result, err := service.Doctor("", id)
@@ -396,6 +438,29 @@ func runRepository(service *core.Service, args []string, jsonOutput bool) (strin
 		return active, success(active, payload, jsonOutput)
 	default:
 		return active, core.Invalidf("unknown repository subcommand %s", args[0])
+	}
+}
+
+func runProvider(args []string, jsonOutput bool) (string, error) {
+	if len(args) != 2 || args[0] != "github" {
+		return "provider", core.Invalidf("usage: provider github <auth|repositories>")
+	}
+	active := "provider.github." + args[1]
+	switch args[1] {
+	case "auth":
+		checks, err := core.AuthenticateGitHubProvider()
+		if err != nil {
+			return active, err
+		}
+		return active, success(active, map[string]any{"provider": "github", "authenticated": true, "checks": checks}, jsonOutput)
+	case "repositories":
+		repositories, err := core.ListGitHubRepositories()
+		if err != nil {
+			return active, err
+		}
+		return active, success(active, map[string]any{"provider": "github", "repositories": repositories}, jsonOutput)
+	default:
+		return active, core.Invalidf("unknown GitHub provider subcommand %s", args[1])
 	}
 }
 

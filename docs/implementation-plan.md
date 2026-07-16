@@ -127,6 +127,8 @@ local-config doctor
 - 识别当前 project path。
 - 使用 Kotlin 调用 `local-config` CLI。
 - 提供 Setup、Sync Now、Status。
+- GitHub provider 入口复用 `gh auth`，支持 public/private Repository picker。
+- 支持单文件 mapping、initial diff，以及显式选择 local/remote initial baseline。
 - 状态栏显示同步状态。
 - 将 CLI JSON 解析为命名 DTO。
 

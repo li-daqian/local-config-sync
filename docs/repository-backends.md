@@ -79,10 +79,13 @@ type Mapping struct {
     SourcePath   string
     TargetPath   string
     Mode         LinkMode
+    Kind         MappingKind
 }
 ```
 
 `sourcePath` 是仓库 workspace 内的相对路径。它取代带有远端实现含义的 `remotePath`。
+
+`kind` 区分单文件和目录 mapping。文件 mapping 可以在不替换既有父目录的情况下同步 `src/main/resources/application-dev.yml` 等文件。
 
 同一 Repository 中的 Mapping 默认禁止 `sourcePath` 重叠，避免一个文件被多个项目以不同同步范围提交。未来如需共享只读配置，应增加显式的 `readOnly` 模式，而不是放宽默认约束。
 

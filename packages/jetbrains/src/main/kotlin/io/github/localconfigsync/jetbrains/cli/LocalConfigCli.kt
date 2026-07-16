@@ -3,7 +3,11 @@ package io.github.localconfigsync.jetbrains.cli
 import com.google.gson.Gson
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
 import java.nio.charset.StandardCharsets
 
 class CliException(val code: String, override val message: String, val diagnostics: String = "") : RuntimeException(message)
@@ -40,4 +44,41 @@ object LocalConfigCli {
 
     fun status(project: Project): StatusResponse = execute(project, listOf("status", "--project", project.basePath.orEmpty()), StatusResponse::class.java)
     fun command(project: Project?, args: List<String>): CommandResponse = execute(project, args, CommandResponse::class.java)
+
+    fun startGithubAuthentication(
+        project: Project,
+        onOutput: (String) -> Unit,
+        onFinished: (Int) -> Unit,
+    ): GithubAuthSession {
+        val commandLine = GeneralCommandLine()
+            .withExePath("gh")
+            .withParameters("auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web")
+            .withCharset(StandardCharsets.UTF_8)
+            .withWorkDirectory(project.basePath.orEmpty())
+        val handler = try {
+            OSProcessHandler(commandLine)
+        } catch (error: Exception) {
+            throw CliException("github_cli_unavailable", "GitHub CLI is required for GitHub authentication.", error.message.orEmpty())
+        }
+        handler.addProcessListener(object : ProcessListener {
+            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) = onOutput(event.text)
+            override fun processTerminated(event: ProcessEvent) = onFinished(event.exitCode)
+        })
+        handler.startNotify()
+        // gh may ask for one confirmation before opening its browser-based device flow.
+        runCatching {
+            handler.processInput.write("\n".toByteArray(StandardCharsets.UTF_8))
+            handler.processInput.flush()
+        }
+        return GithubAuthSession(handler)
+    }
+}
+
+class GithubAuthSession internal constructor(private val handler: OSProcessHandler) {
+    fun cancel() {
+        if (!handler.isProcessTerminated) handler.destroyProcess()
+    }
+
+    fun waitFor(timeoutMillis: Long): Boolean = handler.waitFor(timeoutMillis)
+    val exitCode: Int? get() = handler.exitCode
 }

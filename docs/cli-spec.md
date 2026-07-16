@@ -4,13 +4,17 @@
 
 ```bash
 local-config init
+local-config provider github auth
+local-config provider github repositories
 local-config repository add <type>
 local-config repository list
 local-config repository show <id>
+local-config repository files <id>
 local-config repository doctor <id>
 local-config repository auth [<id>] [--url <url>]
 local-config repository remove <id>
 local-config link
+local-config preview
 local-config pull
 local-config push
 local-config sync
@@ -20,6 +24,19 @@ local-config unlink
 ```
 
 Repository 是一级资源。一个用户可以配置多个 Repository 实例，每个实例由 `git`、`local-folder`、`webdav`、`s3` 等 Driver 处理。
+
+`provider` 只负责 provider-specific 的认证与 Repository discovery。选择完成后仍注册为普通 `git` Repository，后续同步继续复用统一 Git Driver。
+
+## GitHub provider
+
+```bash
+local-config provider github auth --json
+local-config provider github repositories --json
+```
+
+- 认证复用 GitHub CLI 的 `gh auth`，Local Config Sync 不保存 token。
+- Repository 列表包含 `nameWithOwner`、public/private、HTTPS/SSH URL 和 default branch。
+- private Repository 是否可见取决于当前 `gh auth` 账号及其权限。
 
 ## 通用调用协议
 
@@ -193,6 +210,28 @@ local-config link \
   --mode symlink
 ```
 
+单文件 mapping：
+
+```bash
+local-config preview \
+  --project . \
+  --repository personal-git \
+  --source-path ai-rvis-agent/application-dev.yml \
+  --target src/main/resources/application-dev.yml \
+  --kind file
+
+local-config link \
+  --project . \
+  --repository personal-git \
+  --source-path ai-rvis-agent/application-dev.yml \
+  --target src/main/resources/application-dev.yml \
+  --kind file \
+  --mode copy \
+  --initial-strategy remote
+```
+
+`preview` 返回 `remote_only`、`local_only`、`identical`、`conflict` 或 `missing_both`。前三种可以用 `auto` 初始化；`conflict` 必须在 diff 后显式传入 `local` 或 `remote`。该选择只建立 initial baseline，不改变后续同步的 conflict-stop 策略。
+
 行为：
 
 - 验证 business project 是 Git repo。
@@ -202,6 +241,8 @@ local-config link \
 - 对每个 source file 创建 symlink 或 copy。
 - 将 target path 写入 `.git/info/exclude`。
 - 持久化 Mapping。
+- `kind=file` 时只 materialize 所选文件，不要求替换其父目录。
+- target file 已被业务 Git 跟踪时拒绝建立 mapping；`.git/info/exclude` 不能让 tracked file 停止跟踪。
 
 ## pull
 
