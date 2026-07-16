@@ -400,17 +400,45 @@ private fun chooseMappingPaths(project: Project, remoteFiles: List<String>): Map
     if (selected == remoteFiles.size) return chooseLocalUploadPaths(project)
 
     val remotePath = remoteFiles[selected]
-    val localPath = onUiThread {
-        Messages.showInputDialog(
-            project,
-            "Local project file path",
-            "Choose Local File Location",
-            null,
-            remotePath.substringAfterLast('/'),
-            null,
-        )?.trim()
-    }?.takeIf { it.isNotEmpty() } ?: return null
+    val localPath = chooseLocalDownloadPath(project, remotePath) ?: return null
     return MappingPaths(remotePath, localPath)
+}
+
+private fun chooseLocalDownloadPath(project: Project, remotePath: String): String? {
+    val projectPath = Path.of(project.basePath.orEmpty()).toAbsolutePath().normalize()
+    val initial = LocalFileSystem.getInstance().findFileByNioFile(projectPath)
+    val selected = onUiThread {
+        FileChooser.chooseFile(
+            FileChooserDescriptorFactory.createSingleFolderDescriptor()
+                .withTitle("Choose Local Folder")
+                .withDescription("The remote file will be synchronized into this folder using its current file name."),
+            project,
+            initial,
+        )
+    } ?: return null
+    val localPath = localTargetPath(projectPath, Path.of(selected.path), remotePath)
+    if (localPath == null) {
+        onUiThread {
+            Messages.showErrorDialog(
+                project,
+                "Choose a folder inside the current project.",
+                "Setup Local Config Sync",
+            )
+        }
+    }
+    return localPath
+}
+
+internal fun localTargetPath(projectPath: Path, selectedFolder: Path, remotePath: String): String? {
+    val root = projectPath.toAbsolutePath().normalize()
+    val folder = selectedFolder.toAbsolutePath().normalize()
+    if (!folder.startsWith(root)) return null
+
+    val fileName = remotePath.replace('\\', '/').substringAfterLast('/').trim()
+    if (fileName.isEmpty() || fileName == "." || fileName == "..") return null
+    val target = folder.resolve(fileName).normalize()
+    if (!target.startsWith(root)) return null
+    return root.relativize(target).toString().replace('\\', '/')
 }
 
 private fun chooseLocalUploadPaths(project: Project): MappingPaths? {

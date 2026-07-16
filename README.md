@@ -102,7 +102,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 3. 用户点击 `Local Config Sync: Setup` 并选择 GitHub。
 4. 插件复用 `gh auth` 完成认证，并列出当前账号名下的 public/private Repository。
 5. 选择 Repository，再选择已有远端文件或本地文件。
-6. 选择文件在另一端的目标路径。
+6. 远端已有文件时选择项目内的本地文件夹，工具保留远端文件名并将文件同步到该文件夹；本地已有文件时选择 Repository 中的目标路径。
 7. 只有本地或只有远端文件时，工具自动采用已有一侧初始化；两侧文件不同时先展示 diff，再由用户明确选择初始版本。
 8. 工具建立 file mapping，并将项目文件路径写入业务项目 `.git/info/exclude`。
 9. 用户修改业务项目内配置文件，点击 `Sync Now` 安全同步。
