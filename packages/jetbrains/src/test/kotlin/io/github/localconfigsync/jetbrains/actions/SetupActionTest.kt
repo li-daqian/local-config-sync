@@ -27,6 +27,19 @@ class SetupActionTest {
     }
 
     @Test
+    fun `remote file search is case insensitive and matches paths`() {
+        val remoteFiles = listOf(
+            "rokid/ai-rvis-agent/application-dev.yml",
+            "services/billing/application-local.yaml",
+            "shared/logging.xml",
+        )
+
+        assertEquals(listOf(remoteFiles[0]), filterRemoteFiles(remoteFiles, "RVIS-AGENT"))
+        assertEquals(listOf(remoteFiles[1]), filterRemoteFiles(remoteFiles, "billing\\application"))
+        assertEquals(remoteFiles, filterRemoteFiles(remoteFiles, "  "))
+    }
+
+    @Test
     fun `remote file is placed in the selected project folder`() {
         val project = Path.of("workspace", "project").toAbsolutePath()
 

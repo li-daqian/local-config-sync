@@ -226,18 +226,18 @@ private class GitHubRepositorySelectionDialog(
     repositories: List<GitHubRepository>,
 ) : DialogWrapper(project, true) {
     private val allOptions = repositories.map(::RepositoryOption)
-    private var repositoryPopup: JBPopup? = null
-    private val repositoryTrigger = JButton("Choose a repository…").apply {
-        horizontalAlignment = SwingConstants.LEFT
-        preferredSize = Dimension(JBUI.scale(560), JBUI.scale(32))
-        minimumSize = preferredSize
-        toolTipText = "Open the searchable repository list"
-        addActionListener { showRepositoryPopup() }
-    }
-    private var selectedOption: RepositoryOption? = null
+    private val repositoryField = SearchableSelectionField(
+        options = allOptions,
+        initialText = "Choose a repository…",
+        searchHint = "Search by owner or repository name",
+        emptyText = "No matching repositories",
+        displayText = RepositoryOption::toString,
+        matches = { option, query -> repositorySearchMatches(option.repository.nameWithOwner, query) },
+        onSelectionChanged = { setOKActionEnabled(true) },
+    )
 
     val selectedRepository: GitHubRepository?
-        get() = selectedOption?.repository
+        get() = repositoryField.selectedValue?.repository
 
     init {
         title = "Choose a GitHub Repository"
@@ -251,41 +251,61 @@ private class GitHubRepositorySelectionDialog(
         border = JBUI.Borders.empty(8)
         add(JBLabel("Repository"))
         add(Box.createVerticalStrut(JBUI.scale(4)))
-        add(repositoryTrigger)
+        add(repositoryField)
     }
 
-    override fun getPreferredFocusedComponent(): JComponent = repositoryTrigger
+    override fun getPreferredFocusedComponent(): JComponent = repositoryField
+}
 
-    private fun showRepositoryPopup() {
-        if (repositoryPopup?.isVisible == true) return
+private class SearchableSelectionField<T>(
+    private val options: List<T>,
+    initialText: String,
+    private val searchHint: String,
+    private val emptyText: String,
+    private val displayText: (T) -> String,
+    private val matches: (T, String) -> Boolean,
+    private val onSelectionChanged: (T) -> Unit,
+) : JButton(initialText) {
+    private var popup: JBPopup? = null
+    var selectedValue: T? = null
+        private set
+
+    init {
+        horizontalAlignment = SwingConstants.LEFT
+        preferredSize = Dimension(JBUI.scale(560), JBUI.scale(32))
+        minimumSize = preferredSize
+        toolTipText = "Open the searchable list"
+        addActionListener { showPopup() }
+    }
+
+    private fun showPopup() {
+        if (popup?.isVisible == true) return
 
         val searchField = JBTextField().apply {
-            emptyText.text = "Search by owner or repository name"
+            emptyText.text = searchHint
             enableInputMethods(true)
         }
-        val listModel = DefaultListModel<RepositoryOption>()
-        val repositoryList = JBList(listModel).apply {
-            visibleRowCount = 8
-            emptyText.text = "No matching repositories"
+        val listModel = DefaultListModel<T>()
+        val optionList = JBList(listModel).apply {
+            visibleRowCount = 10
+            emptyText.text = this@SearchableSelectionField.emptyText
         }
 
         fun updateMatches() {
-            val filtered = allOptions.filter {
-                repositorySearchMatches(it.repository.nameWithOwner, searchField.text)
-            }
+            val filtered = options.filter { matches(it, searchField.text) }
             listModel.removeAllElements()
             filtered.forEach(listModel::addElement)
             if (!listModel.isEmpty) {
-                repositoryList.selectedIndex = selectedOption?.let(filtered::indexOf)?.takeIf { it >= 0 } ?: 0
+                optionList.selectedIndex = selectedValue?.let(filtered::indexOf)?.takeIf { it >= 0 } ?: 0
             }
         }
 
-        fun choose(option: RepositoryOption?) {
+        fun choose(option: T?) {
             if (option == null) return
-            selectedOption = option
-            repositoryTrigger.text = option.toString()
-            setOKActionEnabled(true)
-            repositoryPopup?.cancel()
+            selectedValue = option
+            text = displayText(option)
+            onSelectionChanged(option)
+            popup?.cancel()
         }
 
         searchField.document.addDocumentListener(object : DocumentListener {
@@ -293,29 +313,29 @@ private class GitHubRepositorySelectionDialog(
             override fun removeUpdate(event: DocumentEvent) = updateMatches()
             override fun changedUpdate(event: DocumentEvent) = updateMatches()
         })
-        searchField.addActionListener { choose(repositoryList.selectedValue) }
+        searchField.addActionListener { choose(optionList.selectedValue) }
         searchField.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(event: KeyEvent) {
                 if (event.keyCode == KeyEvent.VK_DOWN && !listModel.isEmpty) {
-                    repositoryList.requestFocusInWindow()
-                    repositoryList.selectedIndex = 0
+                    optionList.requestFocusInWindow()
+                    optionList.selectedIndex = 0
                     event.consume()
                 }
             }
         })
-        repositoryList.addKeyListener(object : KeyAdapter() {
+        optionList.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(event: KeyEvent) {
                 if (event.keyCode == KeyEvent.VK_ENTER) {
-                    choose(repositoryList.selectedValue)
+                    choose(optionList.selectedValue)
                     event.consume()
                 }
             }
         })
-        repositoryList.addMouseListener(object : MouseAdapter() {
+        optionList.addMouseListener(object : MouseAdapter() {
             override fun mouseReleased(event: MouseEvent) {
                 if (SwingUtilities.isLeftMouseButton(event)) {
-                    val index = repositoryList.locationToIndex(event.point)
-                    if (index >= 0 && repositoryList.getCellBounds(index, index).contains(event.point)) {
+                    val index = optionList.locationToIndex(event.point)
+                    if (index >= 0 && optionList.getCellBounds(index, index).contains(event.point)) {
                         choose(listModel.getElementAt(index))
                     }
                 }
@@ -326,14 +346,14 @@ private class GitHubRepositorySelectionDialog(
         val popupContent = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             border = JBUI.Borders.empty(8)
             add(searchField, BorderLayout.NORTH)
-            add(JScrollPane(repositoryList), BorderLayout.CENTER)
-            preferredSize = Dimension(maxOf(repositoryTrigger.width, JBUI.scale(560)), JBUI.scale(280))
+            add(JScrollPane(optionList), BorderLayout.CENTER)
+            preferredSize = Dimension(maxOf(this@SearchableSelectionField.width, JBUI.scale(560)), JBUI.scale(320))
         }
-        val popup = JBPopupFactory.getInstance()
+        val newPopup = JBPopupFactory.getInstance()
             .createComponentPopupBuilder(popupContent, searchField)
             .setRequestFocus(true)
             .setFocusable(true)
-            .setResizable(false)
+            .setResizable(true)
             .setMovable(false)
             .setStretchToOwnerWidth(true)
             .setCancelOnClickOutside(true)
@@ -343,11 +363,11 @@ private class GitHubRepositorySelectionDialog(
             .setCancelKeyEnabled(true)
             .setMinSize(Dimension(JBUI.scale(360), JBUI.scale(220)))
             .createPopup()
-        repositoryPopup = popup
-        popup.setFinalRunnable {
-            if (repositoryPopup === popup) repositoryPopup = null
+        popup = newPopup
+        newPopup.setFinalRunnable {
+            if (popup === newPopup) popup = null
         }
-        popup.showUnderneathOf(repositoryTrigger)
+        newPopup.showUnderneathOf(this)
     }
 }
 
@@ -384,25 +404,95 @@ private fun ensureRepositoryConfigured(project: Project, selected: GitHubReposit
 
 private data class MappingPaths(val remotePath: String, val localPath: String)
 
-private fun chooseMappingPaths(project: Project, remoteFiles: List<String>): MappingPaths? {
-    val options = (remoteFiles + CREATE_REMOTE_FILE).toTypedArray()
-    val selected = onUiThread {
-        Messages.showDialog(
-            project,
-            "Choose a remote file, or create one from an existing local file",
-            "Setup File Synchronization",
-            options,
-            0,
-            null,
-        )
-    }
-    if (selected < 0) return null
-    if (selected == remoteFiles.size) return chooseLocalUploadPaths(project)
-
-    val remotePath = remoteFiles[selected]
-    val localPath = chooseLocalDownloadPath(project, remotePath) ?: return null
-    return MappingPaths(remotePath, localPath)
+private sealed interface RemoteFileChoice {
+    data class Existing(val path: String) : RemoteFileChoice
+    data object CreateFromLocal : RemoteFileChoice
 }
+
+private fun chooseMappingPaths(project: Project, remoteFiles: List<String>): MappingPaths? {
+    val choice = onUiThread {
+        RemoteFileSelectionDialog(project, remoteFiles).let { dialog ->
+            if (dialog.showAndGet()) dialog.choice else null
+        }
+    } ?: return null
+    return when (choice) {
+        RemoteFileChoice.CreateFromLocal -> chooseLocalUploadPaths(project)
+        is RemoteFileChoice.Existing -> {
+            val localPath = chooseLocalDownloadPath(project, choice.path) ?: return null
+            MappingPaths(choice.path, localPath)
+        }
+    }
+}
+
+private class RemoteFileSelectionDialog(
+    project: Project,
+    remoteFiles: List<String>,
+) : DialogWrapper(project, true) {
+    private var createFromLocal = false
+    private val remoteFileField = SearchableSelectionField(
+        options = remoteFiles,
+        initialText = if (remoteFiles.isEmpty()) "No remote files available" else "Choose an existing remote file…",
+        searchHint = "Search by file name or path",
+        emptyText = "No matching remote files",
+        displayText = { it },
+        matches = ::remoteFileSearchMatches,
+        onSelectionChanged = { setOKActionEnabled(true) },
+    ).apply {
+        isEnabled = remoteFiles.isNotEmpty()
+        toolTipText = if (remoteFiles.isEmpty()) {
+            "This repository has no files yet"
+        } else {
+            "Open the searchable remote file list"
+        }
+    }
+    private val createFromLocalButton = JButton(CREATE_REMOTE_FILE).apply {
+        horizontalAlignment = SwingConstants.LEFT
+        preferredSize = Dimension(JBUI.scale(560), JBUI.scale(32))
+        minimumSize = preferredSize
+        toolTipText = "Choose a project file, then set its path in the repository"
+        addActionListener {
+            createFromLocal = true
+            close(OK_EXIT_CODE)
+        }
+    }
+
+    val choice: RemoteFileChoice?
+        get() = if (createFromLocal) {
+            RemoteFileChoice.CreateFromLocal
+        } else {
+            remoteFileField.selectedValue?.let(RemoteFileChoice::Existing)
+        }
+
+    init {
+        title = "Setup File Synchronization"
+        setOKButtonText("Continue")
+        init()
+        setOKActionEnabled(false)
+    }
+
+    override fun createCenterPanel(): JComponent = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(8)
+        add(JBLabel("Choose a file that already exists in the repository."))
+        add(Box.createVerticalStrut(JBUI.scale(8)))
+        add(JBLabel("Existing remote file"))
+        add(Box.createVerticalStrut(JBUI.scale(4)))
+        add(remoteFileField)
+        add(Box.createVerticalStrut(JBUI.scale(14)))
+        add(JBLabel("Or"))
+        add(Box.createVerticalStrut(JBUI.scale(4)))
+        add(createFromLocalButton)
+    }
+
+    override fun getPreferredFocusedComponent(): JComponent =
+        if (remoteFileField.isEnabled) remoteFileField else createFromLocalButton
+}
+
+internal fun filterRemoteFiles(remoteFiles: List<String>, query: String): List<String> =
+    remoteFiles.filter { remoteFileSearchMatches(it, query) }
+
+private fun remoteFileSearchMatches(path: String, query: String): Boolean =
+    path.replace('\\', '/').contains(query.trim().replace('\\', '/'), ignoreCase = true)
 
 private fun chooseLocalDownloadPath(project: Project, remotePath: String): String? {
     val projectPath = Path.of(project.basePath.orEmpty()).toAbsolutePath().normalize()
