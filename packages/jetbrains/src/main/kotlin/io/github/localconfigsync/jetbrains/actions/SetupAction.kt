@@ -15,7 +15,6 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import io.github.localconfigsync.jetbrains.cli.CliException
@@ -37,6 +36,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
+import javax.swing.JTextField
 import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -216,45 +216,76 @@ private class GitHubRepositorySelectionDialog(
     repositories: List<GitHubRepository>,
 ) : DialogWrapper(project, true) {
     private val allOptions = repositories.map(::RepositoryOption)
-    private val search = SearchTextField(false)
     private val comboBox = ComboBox(DefaultComboBoxModel(allOptions.toTypedArray())).apply {
+        isEditable = true
         setMinimumAndPreferredWidth(560)
     }
+    private val editor = comboBox.editor.editorComponent as JTextField
+    private var selectedOption: RepositoryOption? = null
+    private var filterGeneration = 0
+    private var updatingModel = false
 
     val selectedRepository: GitHubRepository?
-        get() = (comboBox.selectedItem as? RepositoryOption)?.repository
+        get() = selectedOption?.repository
 
     init {
         title = "Choose a GitHub Repository"
         setOKButtonText("Select")
         init()
-        search.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(event: DocumentEvent) = filterRepositories()
-            override fun removeUpdate(event: DocumentEvent) = filterRepositories()
-            override fun changedUpdate(event: DocumentEvent) = filterRepositories()
+        updatingModel = true
+        comboBox.selectedItem = null
+        comboBox.editor.item = ""
+        updatingModel = false
+        setOKActionEnabled(false)
+        editor.toolTipText = "Type an owner or repository name, or open the dropdown"
+        editor.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = scheduleFilter()
+            override fun removeUpdate(event: DocumentEvent) = scheduleFilter()
+            override fun changedUpdate(event: DocumentEvent) = scheduleFilter()
         })
+        comboBox.addActionListener {
+            if (!updatingModel) {
+                selectedOption = comboBox.selectedItem as? RepositoryOption
+                if (selectedOption != null) filterGeneration++
+                setOKActionEnabled(selectedOption != null)
+            }
+        }
     }
 
     override fun createCenterPanel(): JComponent = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.empty(8)
-        add(JBLabel("Search repositories"))
-        add(Box.createVerticalStrut(JBUI.scale(4)))
-        add(search)
-        add(Box.createVerticalStrut(JBUI.scale(12)))
-        add(JBLabel("Repository"))
+        add(JBLabel("Repository (type to search)"))
         add(Box.createVerticalStrut(JBUI.scale(4)))
         add(comboBox)
     }
 
-    override fun getPreferredFocusedComponent(): JComponent = search.textEditor
+    override fun getPreferredFocusedComponent(): JComponent = editor
 
-    private fun filterRepositories() {
-        val query = search.text.trim()
-        val matches = filterGitHubRepositories(allOptions.map(RepositoryOption::repository), query).toSet()
-        val filtered = allOptions.filter { it.repository in matches }
-        comboBox.model = DefaultComboBoxModel(filtered.toTypedArray())
-        setOKActionEnabled(filtered.isNotEmpty())
+    private fun scheduleFilter() {
+        if (updatingModel) return
+        val currentSelection = comboBox.selectedItem as? RepositoryOption
+        if (currentSelection != null && editor.text == currentSelection.toString()) {
+            selectedOption = currentSelection
+            filterGeneration++
+            setOKActionEnabled(true)
+            return
+        }
+        selectedOption = null
+        setOKActionEnabled(false)
+        val query = editor.text
+        val generation = ++filterGeneration
+        SwingUtilities.invokeLater {
+            if (generation != filterGeneration || editor.text != query) return@invokeLater
+            val matches = filterGitHubRepositories(allOptions.map(RepositoryOption::repository), query).toSet()
+            val filtered = allOptions.filter { it.repository in matches }
+            updatingModel = true
+            comboBox.model = DefaultComboBoxModel(filtered.toTypedArray())
+            comboBox.selectedItem = null
+            comboBox.editor.item = query
+            updatingModel = false
+            if (comboBox.isShowing && filtered.isNotEmpty()) comboBox.isPopupVisible = true
+        }
     }
 }
 
