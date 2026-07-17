@@ -486,8 +486,8 @@ private class FileStatusTableModel(private val rows: List<FileStatusSummary>) : 
     override fun getColumnCount(): Int = columns.size
     override fun getColumnName(column: Int): String = columns[column]
     override fun getValueAt(row: Int, column: Int): Any = when (column) {
-        0 -> FilePathCell(displayFileName(rows[row].localPath), rows[row].localPath)
-        1 -> FilePathCell(displayFileName(rows[row].remotePath), rows[row].remotePath)
+        0 -> FilePathCell(displayFileName(rows[row].localPath), rows[row].localPath, rows[row].status)
+        1 -> FilePathCell(displayFileName(rows[row].remotePath), rows[row].remotePath, rows[row].status)
         else -> rows[row].status
     }
 
@@ -495,7 +495,12 @@ private class FileStatusTableModel(private val rows: List<FileStatusSummary>) : 
     fun indexOf(file: FileStatusSummary): Int = rows.indexOf(file)
 }
 
-private data class FilePathCell(val fileName: String, val fullPath: String)
+internal data class FilePathCell(val fileName: String, val fullPath: String, val status: String)
+
+internal fun fileStatusForCell(value: Any?): String = when (value) {
+    is FilePathCell -> value.status
+    else -> value?.toString().orEmpty()
+}
 
 private class FileStatusCellRenderer : DefaultTableCellRenderer() {
     override fun getTableCellRendererComponent(
@@ -509,10 +514,10 @@ private class FileStatusCellRenderer : DefaultTableCellRenderer() {
         super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
         border = JBUI.Borders.empty(0, 8)
         horizontalAlignment = if (column == 2) SwingConstants.LEFT else SwingConstants.LEADING
+        val state = fileStatusForCell(value)
+        if (!isSelected) foreground = statusColor(state)
         if (column == 2) {
-            val state = value?.toString().orEmpty()
             text = fileStatusName(state)
-            if (!isSelected) foreground = statusColor(state)
             toolTipText = when (state) {
                 "local_changes" -> "The Local version will be uploaded to the Repository; double-click to review the diff"
                 "remote_changes" -> "The Repository version will be downloaded to Local; double-click to review the diff"

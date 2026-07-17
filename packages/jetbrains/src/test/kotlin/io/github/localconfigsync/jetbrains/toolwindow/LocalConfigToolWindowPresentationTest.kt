@@ -31,6 +31,14 @@ class LocalConfigToolWindowPresentationTest {
         assertFalse(confirmation.contains("synced.yml"))
     }
 
+    @Test
+    fun pathAndStatusCellsUseTheSameRowStatus() {
+        val status = "local_changes"
+
+        assertEquals(status, fileStatusForCell(FilePathCell("application-dev.yml", "config/application-dev.yml", status)))
+        assertEquals(status, fileStatusForCell(status))
+    }
+
     private fun file(localPath: String, status: String) = FileStatusSummary(
         localPath = localPath,
         remotePath = "repository/$localPath",
