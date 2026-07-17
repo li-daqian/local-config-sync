@@ -2,28 +2,243 @@
 
 set -uo pipefail
 
-report_dir=${1:-packages/jetbrains/build/reports/pluginVerifier}
+report_dir=packages/jetbrains/build/reports/pluginVerifier
+summary_file=""
+github_annotations=false
+report_dir_set=false
+annotation_limit=20
 
-printf '## JetBrains Plugin Verifier\n\n'
+usage() {
+  cat <<'EOF'
+Usage: scripts/summarize-plugin-verifier [report-dir] [options]
+
+Summarize IntelliJ Plugin Verifier Markdown reports.
+
+Options:
+  --summary-file <path>   Append Markdown summary to this file instead of stdout
+  --github-annotations    Emit GitHub Actions warning/error annotations to stdout
+  -h, --help              Show this help
+EOF
+}
+
+fail() {
+  printf 'summarize-plugin-verifier: %s\n' "$*" >&2
+  exit 2
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --summary-file)
+      (($# >= 2)) || fail "--summary-file requires a value"
+      summary_file=$2
+      shift 2
+      ;;
+    --github-annotations)
+      github_annotations=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      fail "unknown option: $1"
+      ;;
+    *)
+      [[ "$report_dir_set" == false ]] || fail "report directory was provided more than once"
+      report_dir=$1
+      report_dir_set=true
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$summary_file" ]]; then
+  exec 3>>"$summary_file" || fail "cannot open summary file: $summary_file"
+else
+  exec 3>&1
+fi
+
+summary_printf() {
+  printf "$@" >&3
+}
+
+table_cell() {
+  local value=$1
+  value=${value//$'\r'/}
+  value=${value//$'\n'/<br>}
+  value=${value//|/\\|}
+  printf '%s' "$value"
+}
+
+workflow_command_property() {
+  local value=$1
+  value=${value//'%'/'%25'}
+  value=${value//$'\r'/'%0D'}
+  value=${value//$'\n'/'%0A'}
+  value=${value//':'/'%3A'}
+  value=${value//','/'%2C'}
+  printf '%s' "$value"
+}
+
+workflow_command_data() {
+  local value=$1
+  value=${value//'%'/'%25'}
+  value=${value//$'\r'/'%0D'}
+  value=${value//$'\n'/'%0A'}
+  printf '%s' "$value"
+}
+
+report_verdict() {
+  awk 'NR > 1 && NF { print; exit }' "$1"
+}
+
+report_finding_count() {
+  awk '
+    /^## / {
+      in_findings = ($0 != "## Dynamic Plugin Status")
+      section_has_count = 0
+      if (in_findings && match($0, /\([0-9]+\)$/)) {
+        count_text = substr($0, RSTART + 1, RLENGTH - 2)
+        total += count_text + 0
+        section_has_count = 1
+      }
+      next
+    }
+    in_findings && !section_has_count && /^### / { total++ }
+    END { print total + 0 }
+  ' "$1"
+}
+
+report_categories() {
+  local report=$1
+  local line category categories=""
+
+  while IFS= read -r line; do
+    category=${line#\#\# }
+    [[ "$category" == "Dynamic Plugin Status" ]] && continue
+    if [[ -n "$categories" ]]; then
+      categories+="<br>"
+    fi
+    categories+=$(table_cell "$category")
+  done < <(sed -n '/^## /p' "$report")
+
+  if [[ -z "$categories" ]]; then
+    categories='—'
+  fi
+  printf '%s' "$categories"
+}
+
+annotation_level() {
+  local section
+  section=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$section" in
+    *compatibility\ problem*|*missing\ dependenc*|*invalid\ plugin*|*not\ compatible*)
+      printf 'error'
+      ;;
+    *)
+      printf 'warning'
+      ;;
+  esac
+}
+
+emit_annotation() {
+  local level=$1
+  local title=$2
+  local message=$3
+  printf '::%s title=%s::%s\n' \
+    "$level" \
+    "$(workflow_command_property "$title")" \
+    "$(workflow_command_data "$message")"
+}
+
+emit_report_annotations() {
+  local report=$1
+  local ide=$2
+  local verdict=$3
+  local line current_section="" problem level
+  local emitted=0
+  local total=0
+
+  while IFS= read -r line; do
+    if [[ "$line" == "## "* ]]; then
+      current_section=${line#\#\# }
+      current_section=${current_section% ([0-9]*)}
+      if [[ "$current_section" == "Dynamic Plugin Status" ]]; then
+        current_section=""
+      fi
+      continue
+    fi
+
+    if [[ -n "$current_section" && "$line" == "### "* ]]; then
+      problem=${line#"### "}
+      ((total++))
+      if ((emitted < annotation_limit)); then
+        level=$(annotation_level "$current_section")
+        emit_annotation "$level" "Plugin Verifier: $ide — $current_section" "$problem"
+        ((emitted++))
+      fi
+    fi
+  done < "$report"
+
+  if ((total > annotation_limit)); then
+    emit_annotation notice "Plugin Verifier: $ide" \
+      "$((total - annotation_limit)) more findings are available in the Job Summary and plugin-verifier-reports artifact."
+  elif ((total == 0)) && [[ "$verdict" != Compatible* ]]; then
+    emit_annotation error "Plugin Verifier: $ide" "$verdict"
+  fi
+}
+
+summary_printf '## JetBrains Plugin Verifier\n\n'
 
 if [[ ! -d "$report_dir" ]]; then
-  printf 'No plugin verifier report was generated. Inspect the failed step logs.\n'
+  summary_printf 'No plugin verifier report was generated. Inspect the failed step logs.\n'
   exit 0
 fi
 
-printf 'Full reports are available in the `plugin-verifier-reports` artifact.\n'
-
-found_report=false
+reports=()
 while IFS= read -r report; do
-  found_report=true
-  printf '\n### `%s`\n\n' "${report#"$report_dir"/}"
-  sed -n '1,240p' "$report"
+  reports+=("$report")
 done < <(find "$report_dir" -type f -name 'report.md' -print | sort)
 
-if [[ "$found_report" == false ]]; then
-  printf '\nNo Markdown verifier report was found. Verification verdicts:\n\n'
+if ((${#reports[@]} == 0)); then
+  summary_printf 'No Markdown verifier report was found. Verification verdicts:\n\n'
   while IFS= read -r verdict; do
-    printf -- '- `%s`: ' "${verdict#"$report_dir"/}"
-    sed -n '1,20p' "$verdict"
+    summary_printf -- '- `%s`: ' "${verdict#"$report_dir"/}"
+    sed -n '1,20p' "$verdict" >&3
   done < <(find "$report_dir" -type f -name 'verification-verdict.txt' -print | sort)
+  exit 0
 fi
+
+summary_printf 'All verifier findings are CI-blocking. Full reports are available in the `plugin-verifier-reports` artifact.\n\n'
+summary_printf '| IDE | Verdict | Findings | Categories |\n'
+summary_printf '| --- | --- | ---: | --- |\n'
+
+for report in "${reports[@]}"; do
+  relative_path=${report#"$report_dir"/}
+  ide=${relative_path%/report.md}
+  verdict=$(report_verdict "$report")
+  finding_count=$(report_finding_count "$report")
+  categories=$(report_categories "$report")
+  summary_printf '| `%s` | %s | %s | %s |\n' \
+    "$(table_cell "$ide")" \
+    "$(table_cell "$verdict")" \
+    "$finding_count" \
+    "$categories"
+
+  if [[ "$github_annotations" == true ]]; then
+    emit_report_annotations "$report" "$ide" "$verdict"
+  fi
+done
+
+for report in "${reports[@]}"; do
+  relative_path=${report#"$report_dir"/}
+  summary_printf '\n<details>\n<summary><code>%s</code> full report</summary>\n\n' \
+    "$(table_cell "$relative_path")"
+  sed -n '1,240p' "$report" >&3
+  line_count=$(wc -l < "$report")
+  if ((line_count > 240)); then
+    summary_printf '\n_Report truncated after 240 lines; see the artifact for the complete report._\n'
+  fi
+  summary_printf '\n</details>\n'
+done

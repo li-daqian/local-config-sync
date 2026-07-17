@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+fixture_dir=$(mktemp -d "${TMPDIR:-/tmp}/plugin-verifier-summary-test.XXXXXX")
+trap 'rm -rf -- "$fixture_dir"' EXIT
+
+mkdir -p "$fixture_dir/IU-261.1" "$fixture_dir/IU-262.2"
+
+cat > "$fixture_dir/IU-261.1/report.md" <<'EOF'
+# Plugin example:1.0 against IU-261.1
+
+Compatible. 2 usages of deprecated API
+
+## Deprecated API usages (2)
+
+### Deprecated method example.Old.first() invocation
+
+* Deprecated method example.Old.first() is invoked
+
+### Deprecated method example.Old.second() invocation
+
+* Deprecated method example.Old.second() is invoked
+
+## Dynamic Plugin Status
+
+Plugin can probably be enabled or disabled without IDE restart
+EOF
+
+cat > "$fixture_dir/IU-262.2/report.md" <<'EOF'
+# Plugin example:1.0 against IU-262.2
+
+Not compatible. 1 compatibility problem
+
+## Compatibility problems (1)
+
+### No such method example.Removed.call()
+
+* No such method example.Removed.call() is invoked
+EOF
+
+summary_file="$fixture_dir/summary.md"
+annotations=$(
+  "$script_dir/summarize-plugin-verifier" \
+    "$fixture_dir" \
+    --summary-file "$summary_file" \
+    --github-annotations
+)
+
+assert_contains() {
+  local file=$1
+  local expected=$2
+  if ! grep -Fq -- "$expected" "$file"; then
+    printf 'Expected %s to contain: %s\n' "$file" "$expected" >&2
+    exit 1
+  fi
+}
+
+assert_contains "$summary_file" '| `IU-261.1` | Compatible. 2 usages of deprecated API | 2 | Deprecated API usages (2) |'
+assert_contains "$summary_file" '| `IU-262.2` | Not compatible. 1 compatibility problem | 1 | Compatibility problems (1) |'
+assert_contains "$summary_file" '<summary><code>IU-261.1/report.md</code> full report</summary>'
+
+annotations_file="$fixture_dir/annotations.txt"
+printf '%s\n' "$annotations" > "$annotations_file"
+assert_contains "$annotations_file" '::warning title=Plugin Verifier%3A IU-261.1 — Deprecated API usages::Deprecated method example.Old.first() invocation'
+assert_contains "$annotations_file" '::error title=Plugin Verifier%3A IU-262.2 — Compatibility problems::No such method example.Removed.call()'
+
+default_output="$fixture_dir/default-output.md"
+"$script_dir/summarize-plugin-verifier" "$fixture_dir" > "$default_output"
+assert_contains "$default_output" '## JetBrains Plugin Verifier'
+if grep -Fq '::warning' "$default_output"; then
+  printf 'Default output unexpectedly contained GitHub annotations\n' >&2
+  exit 1
+fi
+
+printf 'summarize-plugin-verifier tests passed\n'

@@ -11,6 +11,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "package.json"
+      - "scripts/summarize-plugin-verifier"
+      - "scripts/test-summarize-plugin-verifier"
   pull_request:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
@@ -20,6 +22,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "package.json"
+      - "scripts/summarize-plugin-verifier"
+      - "scripts/test-summarize-plugin-verifier"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -84,6 +88,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Verify CI reporting scripts
+        run: scripts/test-summarize-plugin-verifier
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -108,7 +115,11 @@ jobs:
       - name: Summarize plugin verifier reports
         if: ${{ always() }}
         shell: bash
-        run: scripts/summarize-plugin-verifier packages/jetbrains/build/reports/pluginVerifier >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          scripts/summarize-plugin-verifier \
+            packages/jetbrains/build/reports/pluginVerifier \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --github-annotations
 
       - name: Upload plugin verifier reports
         if: ${{ always() }}

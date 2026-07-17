@@ -225,7 +225,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
   verifyPluginProjectConfiguration verifyPluginStructure buildPlugin
 ```
 
-完整验证由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行：native CLI 会分别在 Linux、macOS、Windows 的 amd64/arm64 runner 上构建并执行；插件兼容性覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Go/Gradle 依赖并上传 `pluginVerifier` 报告。
+完整验证由 `.github/workflows/jetbrains-plugin.yml` 在 GitHub Actions 中运行：native CLI 会分别在 Linux、macOS、Windows 的 amd64/arm64 runner 上构建并执行；插件兼容性覆盖最低支持版本 IntelliJ IDEA 2026.1.4 与 IntelliJ IDEA 2026.2 RC（build 262.8665.176），并将 deprecated、scheduled-for-removal、internal 和其他 verifier warning 视为失败。CI 会缓存 Go/Gradle 依赖、在 Job Summary 中按 IDE 展示 verdict 和问题分类、生成 GitHub warning/error annotations，并上传完整 `pluginVerifier` 报告。
 
 已登录 GitHub CLI 后，可以等待当前分支最新一次 JetBrains workflow，并自动读取失败步骤、下载 verifier report 和扫描关键诊断：
 
