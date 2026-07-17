@@ -103,6 +103,58 @@ func TestFilePreviewAndLinkJSONContract(t *testing.T) {
 	if err != nil || string(content) != "profile: dev\n" {
 		t.Fatalf("unexpected repository file %q, %v", content, err)
 	}
+	if _, err := run([]string{"sync", "--project", project, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localFile, []byte("profile: local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	remoteFile := filepath.Join(repository, "project/application-dev.yml")
+	if err := os.WriteFile(remoteFile, []byte("profile: remote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statusOutput := captureStdout(t, func() error {
+		_, err := run([]string{"status", "--project", project, "--json"})
+		return err
+	})
+	var status struct {
+		State string `json:"state"`
+		Files []struct {
+			MappingID  string `json:"mappingId"`
+			RemotePath string `json:"remotePath"`
+			Status     string `json:"status"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(statusOutput, &status); err != nil || status.State != "conflict" || len(status.Files) != 1 || status.Files[0].Status != "conflict" {
+		t.Fatalf("unexpected file status response: %#v, %v", status, err)
+	}
+	diffOutput := captureStdout(t, func() error {
+		_, err := run([]string{
+			"diff", "--project", project, "--mapping", status.Files[0].MappingID,
+			"--path", status.Files[0].RemotePath, "--json",
+		})
+		return err
+	})
+	var diff struct {
+		ContentEncoding string `json:"contentEncoding"`
+		RemoteRevision  string `json:"remoteRevision"`
+		LocalContent    string `json:"localContent"`
+		RemoteContent   string `json:"remoteContent"`
+	}
+	if err := json.Unmarshal(diffOutput, &diff); err != nil || diff.ContentEncoding != "base64" || diff.RemoteRevision == "" || diff.LocalContent == "" || diff.RemoteContent == "" {
+		t.Fatalf("unexpected diff response: %#v, %v", diff, err)
+	}
+	if _, err := run([]string{
+		"resolve", "--project", project, "--mapping", status.Files[0].MappingID,
+		"--path", status.Files[0].RemotePath, "--expected-revision", diff.RemoteRevision,
+		"--strategy", "remote", "--json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	content, err = os.ReadFile(localFile)
+	if err != nil || string(content) != "profile: remote\n" {
+		t.Fatalf("remote resolution did not update local file: %q, %v", content, err)
+	}
 }
 
 func TestSensitiveFilePreviewAndLinkJSONContract(t *testing.T) {

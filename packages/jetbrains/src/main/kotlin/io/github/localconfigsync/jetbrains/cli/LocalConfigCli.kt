@@ -53,6 +53,11 @@ object LocalConfigCli {
     }
 
     fun status(project: Project): StatusResponse = execute(project, listOf("status", "--project", project.basePath.orEmpty()), StatusResponse::class.java)
+    fun diff(project: Project, mappingId: String, path: String): FileDiffResponse = execute(
+        project,
+        listOf("diff", "--project", project.basePath.orEmpty(), "--mapping", mappingId, "--path", path),
+        FileDiffResponse::class.java,
+    )
     fun command(project: Project?, args: List<String>): CommandResponse = execute(project, args, CommandResponse::class.java)
 
     fun startGithubAuthentication(

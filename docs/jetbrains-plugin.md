@@ -71,10 +71,9 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 
 建议入口：
 
-- Status Bar Widget：显示 `Synced` / `Pending` / `Failed` / `Conflict`，点击后打开 Tool Window。
 - Settings Page：提供自定义 CLI 路径的高级 override。
 - Project Context Action：右键项目目录，`Setup Local Config Sync`。
-- Tool Window：作为插件主界面，展示当前项目、Repository、Mapping、last sync 和真实错误诊断，并提供 Refresh / Setup / Sync / Git Auth。
+- Tool Window：作为插件主界面，以 file table 展示 local path、Repository path 和 file-level status；Project / Repository 元数据使用紧凑详情入口，并提供新增 Mapping、Refresh / Sync / Git Auth、diff 和显式冲突解决。
 
 ## Setup Wizard
 

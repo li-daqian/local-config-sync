@@ -129,7 +129,7 @@ local-config doctor
 - 提供 Setup、Sync Now、Status。
 - GitHub provider 入口复用 `gh auth`，支持 public/private Repository picker。
 - 支持单文件 mapping、initial diff，以及显式选择 local/remote initial baseline。
-- 状态栏显示同步状态。
+- Tool Window 以 file table 显示同步状态，并提供新增 Mapping 和显式冲突解决入口。
 - 将 CLI JSON 解析为命名 DTO。
 
 插件不实现：

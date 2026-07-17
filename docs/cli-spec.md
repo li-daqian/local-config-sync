@@ -19,6 +19,8 @@ local-config pull
 local-config push
 local-config sync
 local-config status
+local-config diff
+local-config resolve
 local-config doctor
 local-config unlink
 ```
@@ -330,6 +332,7 @@ local-config status --project . --json
 - Repository 公共 capabilities 和连接状态。
 - Mapping source path、target path、link mode 和 mapped files。
 - exclude 状态、待上传/待下载状态和 last sync time。
+- 每个 mapped file 的 local path、Repository path 和 `synced|local_changes|remote_changes|conflict` 状态。
 
 JSON 响应模型：
 
@@ -365,6 +368,17 @@ JSON 响应模型：
       "excludeConfigured": true
     }
   ],
+  "files": [
+    {
+      "mappingId": "ai-rvis-agent-dev",
+      "repositoryId": "personal-git",
+      "localPath": "config/application-dev.yml",
+      "remotePath": "ai-rvis-agent/config/application-dev.yml",
+      "status": "conflict",
+      "localExists": true,
+      "remoteExists": true
+    }
+  ],
   "lastSyncTime": "2026-07-14T10:00:00Z"
 }
 ```
@@ -380,6 +394,37 @@ failed
 conflict
 paused
 ```
+
+## diff / resolve
+
+读取单个 mapped file 的 local / Repository 内容用于 diff：
+
+```bash
+local-config diff \
+  --project . \
+  --mapping ai-rvis-agent-dev \
+  --path ai-rvis-agent/config/application-dev.yml \
+  --json
+```
+
+内容使用 `base64` 编码，避免 JSON contract 损坏换行或非 UTF-8 bytes。`diff` 不修改文件。
+
+对 `kind=file`、`mode=copy` 的真实 conflict，用户 review diff 并确认后可以显式解决：
+
+```bash
+local-config resolve \
+  --project . \
+  --mapping ai-rvis-agent-dev \
+  --path ai-rvis-agent/config/application-dev.yml \
+  --expected-revision 9d99b62c \
+  --strategy local
+```
+
+- `local`：先安全拉取当前 Repository revision，再以 local file 覆盖该 Repository path，并使用 expected revision 条件发布。
+- `remote`：安全拉取后以 Repository file 覆盖 local file。
+- `--expected-revision` 必须来自刚刚 review 的 `diff.remoteRevision`；Repository 在 review 后再次变化时停止并返回 `conflict`，不得沿用过期选择。
+- `local` 版本命中 sensitive pattern 时仍需对本次命令显式传入 `--allow-sensitive`；该选择不持久化。
+- `resolve` 不支持 force push 或 `reset --hard`，也不能顺带解决其他 Mapping/file。
 
 ## doctor
 

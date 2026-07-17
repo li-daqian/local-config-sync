@@ -48,3 +48,19 @@ func RunProcess(command string, args []string, cwd string, extraEnv map[string]s
 	}
 	return result, WrapError(code, "Cannot start "+command+": "+err.Error(), err, map[string]any{"command": command})
 }
+
+func RunProcessBytes(command string, args []string, cwd string) ([]byte, error) {
+	cmd := exec.Command(command, args...)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	content, err := cmd.Output()
+	if err == nil {
+		return content, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		message := strings.TrimSpace(string(exitErr.Stderr))
+		return nil, NewError(ErrRepositoryFailed, command+" failed: "+message, map[string]any{"command": command, "args": args, "exitCode": exitErr.ExitCode()})
+	}
+	return nil, WrapError(ErrRepositoryFailed, "Cannot start "+command+": "+err.Error(), err, map[string]any{"command": command})
+}

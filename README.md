@@ -82,7 +82,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.5.zip` 后即可使用。插件内置 Linux、macOS、Windows 的 amd64/arm64 六个 native CLI binary，不要求用户安装 Node.js；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
-插件右侧 `Local Config Sync` Tool Window 集中展示项目状态、Repository、Mapping 和错误诊断，并提供 Setup、Sync、Git Auth 和 Refresh。点击底部状态栏的 `Local Config: ...` 会直接打开该面板。
+插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。Project 与 Repository 元数据通过紧凑详情入口展示，不再注册底部状态栏组件。
 
 本地构建默认禁止自动下载 IntelliJ SDK，避免意外下载数 GB 文件。必须通过
 `-PlocalIdeaPath` 使用已有 IDE；确实需要下载时，显式传入
@@ -117,6 +117,8 @@ local-config pull
 local-config push
 local-config sync
 local-config status
+local-config diff
+local-config resolve
 local-config doctor
 ```
 
@@ -190,7 +192,7 @@ local-config sync --project /path/to/business-project
 - `Setup Local Config Sync`：GitHub 认证、Repository/file picker、initial diff 和 file mapping。
 - `Authenticate Local Config Git Repository`：验证 `auto` / SSH / credential helper / `gh`。
 - `Sync Local Config Now`：background task 中执行安全 sync。
-- Status Bar Widget：显示 `Synced` / `Pending` / `Conflict` / `Failed` 等 CLI 状态。
+- Tool Window file table：显示每个文件的 `Synced` / `Push required` / `Update available` / `Conflict`，并提供 diff 与显式冲突解决。
 
 ## 安全默认值
 

@@ -153,6 +153,17 @@ mappings:
       "excludeConfigured": true
     }
   ],
+  "files": [
+    {
+      "mappingId": "ai-rvis-agent-dev",
+      "repositoryId": "personal-git",
+      "localPath": "config/application-dev.yml",
+      "remotePath": "ai-rvis-agent/config/application-dev.yml",
+      "status": "synced",
+      "localExists": true,
+      "remoteExists": true
+    }
+  ],
   "lastSyncTime": "2026-07-14T10:00:00Z"
 }
 ```

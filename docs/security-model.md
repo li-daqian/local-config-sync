@@ -90,10 +90,12 @@ Local Config Sync 配置文件不得保存 Git token、WebDAV password、S3 acce
 允许：
 
 - 展示冲突文件。
+- 展示 local / Repository diff。
+- 对单文件 `copy` Mapping，在用户查看 diff 并再次确认后显式选择 `local` 或 `remote`。`local` 仍必须先安全拉取并使用 expected revision 条件发布；Repository 再次变化时停止并要求重新 review。
 - 打开 Repository workspace。
 - 给出 Driver-specific 手工解决建议。
 
-首次建立单文件 mapping 是唯一的显式初始化例外：如果本地和 Repository 文件同时存在且内容不同，UI 必须先展示 diff，并要求用户明确选择 `local` 或 `remote` 作为 initial baseline。没有显式选择时 core 返回 `conflict`；mapping 建立后的同步不得复用该覆盖选择。
+首次建立单文件 mapping 时，如果本地和 Repository 文件同时存在且内容不同，UI 必须先展示 diff，并要求用户明确选择 `local` 或 `remote` 作为 initial baseline。没有显式选择时 core 返回 `conflict`；mapping 建立后的同步不得复用该初始化选择，必须停止并进入独立的 diff + explicit resolution 流程。
 
 单文件 target 已被业务 Git 跟踪时拒绝 Setup。用户必须先独立处理业务仓库中的 tracked 状态，工具不能通过 `.git/info/exclude` 伪装成已经停止跟踪。
 

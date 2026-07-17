@@ -60,7 +60,7 @@ intellijPlatform {
               <li>project setup and repository mapping;</li>
               <li>safe manual synchronization with conflict detection;</li>
               <li>Git authentication checks; and</li>
-              <li>sync status in the IDE status bar.</li>
+              <li>file-level sync status and conflict resolution in the Tool Window.</li>
             </ul>
             <p>
               The plugin includes native CLI binaries for Linux, macOS, and Windows on x64 and
@@ -70,13 +70,13 @@ intellijPlatform {
             </p>
         """.trimIndent()
         changeNotes = """
-            <p>GitHub repository setup UX improvements.</p>
+            <p>File-level synchronization workspace.</p>
             <ul>
-              <li>Add a searchable popover combobox for selecting public and private GitHub repositories.</li>
-              <li>Keep the search field inside the repository popup and filter by owner or repository name.</li>
-              <li>Support Linux input methods in the repository search field.</li>
-              <li>Show modal progress while GitHub authentication and repository loading are running.</li>
-              <li>Handle repositories with no files and nullable CLI wire payloads safely.</li>
+              <li>Replace the status bar widget and verbose cards with a file status table.</li>
+              <li>Add mappings directly from the table toolbar.</li>
+              <li>Show local and Repository content in the IntelliJ diff viewer.</li>
+              <li>Resolve copy-mode file conflicts with an explicit local or Repository choice.</li>
+              <li>Format last sync timestamps in the user's local date and time format.</li>
             </ul>
         """.trimIndent()
         ideaVersion {

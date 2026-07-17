@@ -157,6 +157,36 @@ type MappingSummary struct {
 	ExcludeConfigured bool        `json:"excludeConfigured"`
 }
 
+type FileStatusSummary struct {
+	MappingID    string `json:"mappingId"`
+	RepositoryID string `json:"repositoryId"`
+	LocalPath    string `json:"localPath"`
+	RemotePath   string `json:"remotePath"`
+	Status       string `json:"status"`
+	LocalExists  bool   `json:"localExists"`
+	RemoteExists bool   `json:"remoteExists"`
+}
+
+type FileDiff struct {
+	MappingID       string `json:"mappingId"`
+	RepositoryID    string `json:"repositoryId"`
+	LocalPath       string `json:"localPath"`
+	RemotePath      string `json:"remotePath"`
+	RemoteRevision  string `json:"remoteRevision"`
+	LocalExists     bool   `json:"localExists"`
+	RemoteExists    bool   `json:"remoteExists"`
+	ContentEncoding string `json:"contentEncoding"`
+	LocalContent    string `json:"localContent,omitempty"`
+	RemoteContent   string `json:"remoteContent,omitempty"`
+}
+
+type ConflictStrategy string
+
+const (
+	ConflictStrategyLocal  ConflictStrategy = "local"
+	ConflictStrategyRemote ConflictStrategy = "remote"
+)
+
 type MappingPreview struct {
 	State              string      `json:"state"`
 	Kind               MappingKind `json:"kind"`
@@ -194,5 +224,6 @@ type StatusResult struct {
 	State        string              `json:"state"`
 	Repositories []RepositorySummary `json:"repositories"`
 	Mappings     []MappingSummary    `json:"mappings"`
+	Files        []FileStatusSummary `json:"files"`
 	LastSyncTime string              `json:"lastSyncTime,omitempty"`
 }

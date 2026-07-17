@@ -77,8 +77,9 @@
 验收标准：
 
 - 工具停止自动同步。
-- 展示冲突文件列表。
-- 提供打开冲突文件、Repository workspace 或查看 Driver-specific 解决建议的入口。
+- 展示冲突文件列表和 local / Repository diff。
+- 对 `copy` 单文件 Mapping，用户查看 diff 后可以显式选择 local 或 Repository 版本；选择 local 时通过安全条件发布创建新版本，选择 Repository 时显式覆盖本地副本。
+- 其他 Mapping 提供打开冲突文件、Repository workspace 或查看 Driver-specific 解决建议的入口。
 
 首次创建 mapping 时的“两侧文件已存在”不沿用自动同步：用户查看 diff 后可以显式选择本地或远端作为 initial baseline。mapping 建立后的并发修改仍必须停止，不得自动覆盖。
 

@@ -149,6 +149,99 @@ func (d *GitDriver) Inspect(context DriverContext) (RepositoryStatus, error) {
 	return RepositoryStatus{State: state, RemoteRevision: remote, LocalChanges: changes, RemoteChanged: remote != local, Capabilities: gitCapabilities}, nil
 }
 
+func (d *GitDriver) ensureRevision(repository Repository, revision string) error {
+	if revision == "" {
+		return nil
+	}
+	present, err := RunProcess("git", []string{"cat-file", "-e", revision + "^{commit}"}, repository.WorkspacePath, nil, true)
+	if err != nil {
+		return err
+	}
+	if present.ExitCode == 0 {
+		return nil
+	}
+	fetched, err := RunProcess("git", []string{"fetch", "--no-tags", "origin", repository.Options.Branch}, repository.WorkspacePath, nil, true)
+	if err != nil {
+		return err
+	}
+	if fetched.ExitCode != 0 {
+		return NewError(ErrRepositoryFailed, "Cannot fetch Git revision for file status", map[string]any{"repositoryId": repository.ID})
+	}
+	present, err = RunProcess("git", []string{"cat-file", "-e", revision + "^{commit}"}, repository.WorkspacePath, nil, true)
+	if err != nil {
+		return err
+	}
+	if present.ExitCode != 0 {
+		return NewError(ErrRepositoryFailed, "Remote Git revision is not available locally", map[string]any{"repositoryId": repository.ID, "revision": revision})
+	}
+	return nil
+}
+
+func (d *GitDriver) Snapshot(context DriverContext, revision string) (map[string]FileSnapshot, error) {
+	if revision == "" {
+		return map[string]FileSnapshot{}, nil
+	}
+	if err := d.ensureRevision(context.Repository, revision); err != nil {
+		return nil, err
+	}
+	args := []string{"ls-tree", "-r", "--name-only", revision, "--"}
+	args = append(args, context.Scopes...)
+	listed, err := RunProcess("git", args, context.Repository.WorkspacePath, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]FileSnapshot{}
+	for _, path := range splitLines(listed.Stdout) {
+		content, err := RunProcessBytes("git", []string{"show", revision + ":" + path}, context.Repository.WorkspacePath)
+		if err != nil {
+			return nil, err
+		}
+		result[path] = SnapshotContent(content)
+	}
+	return result, nil
+}
+
+func (d *GitDriver) ReadFile(context DriverContext, revision, path string) ([]byte, bool, error) {
+	if revision == "" {
+		return nil, false, nil
+	}
+	if err := d.ensureRevision(context.Repository, revision); err != nil {
+		return nil, false, err
+	}
+	present, err := RunProcess("git", []string{"cat-file", "-e", revision + ":" + path}, context.Repository.WorkspacePath, nil, true)
+	if err != nil {
+		return nil, false, err
+	}
+	if present.ExitCode != 0 {
+		return nil, false, nil
+	}
+	content, err := RunProcessBytes("git", []string{"show", revision + ":" + path}, context.Repository.WorkspacePath)
+	return content, err == nil, err
+}
+
+func (d *GitDriver) RestoreWorkspace(context DriverContext) error {
+	for _, path := range context.Scopes {
+		tracked, err := RunProcess("git", []string{"ls-files", "--error-unmatch", "--", path}, context.Repository.WorkspacePath, nil, true)
+		if err != nil {
+			return err
+		}
+		if tracked.ExitCode == 0 {
+			if _, err := RunProcess("git", []string{"restore", "--staged", "--worktree", "--source=HEAD", "--", path}, context.Repository.WorkspacePath, nil, false); err != nil {
+				return err
+			}
+			continue
+		}
+		absolute, err := ResolveInside(context.Repository.WorkspacePath, path)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(absolute); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *GitDriver) Pull(context DriverContext) (PullResult, error) {
 	before, err := localRevision(context.Repository)
 	if err != nil {

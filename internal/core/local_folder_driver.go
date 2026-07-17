@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"sort"
 )
@@ -35,6 +36,37 @@ func (d *LocalFolderDriver) Inspect(context DriverContext) (RepositoryStatus, er
 	}
 	return RepositoryStatus{State: "synced", RemoteRevision: snapshotRevision(snapshot), LocalChanges: []string{}, Capabilities: localFolderCapabilities}, nil
 }
+
+func (d *LocalFolderDriver) Snapshot(context DriverContext, _ string) (map[string]FileSnapshot, error) {
+	all, err := SnapshotDirectory(context.Repository.WorkspacePath, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(context.Scopes) == 0 {
+		return all, nil
+	}
+	result := map[string]FileSnapshot{}
+	for path, snapshot := range all {
+		if inScope(path, context.Scopes) {
+			result[path] = snapshot
+		}
+	}
+	return result, nil
+}
+
+func (d *LocalFolderDriver) ReadFile(context DriverContext, _ string, path string) ([]byte, bool, error) {
+	absolute, err := ResolveInside(context.Repository.WorkspacePath, path)
+	if err != nil {
+		return nil, false, err
+	}
+	content, err := os.ReadFile(absolute)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	return content, err == nil, err
+}
+
+func (d *LocalFolderDriver) RestoreWorkspace(DriverContext) error { return nil }
 
 func (d *LocalFolderDriver) Pull(context DriverContext) (PullResult, error) {
 	status, err := d.Inspect(context)

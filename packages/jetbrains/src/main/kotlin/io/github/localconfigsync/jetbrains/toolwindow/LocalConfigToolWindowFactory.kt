@@ -1,35 +1,65 @@
 package io.github.localconfigsync.jetbrains.toolwindow
 
+import com.intellij.diff.DiffManager
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.options.ShowSettingsUtil
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import io.github.localconfigsync.jetbrains.actions.reportFailure
+import io.github.localconfigsync.jetbrains.actions.confirmSensitiveFiles
+import io.github.localconfigsync.jetbrains.actions.runBackground
 import io.github.localconfigsync.jetbrains.actions.startGitAuth
 import io.github.localconfigsync.jetbrains.actions.startSetup
 import io.github.localconfigsync.jetbrains.actions.startSync
-import io.github.localconfigsync.jetbrains.cli.MappingSummary
+import io.github.localconfigsync.jetbrains.cli.FileDiffResponse
+import io.github.localconfigsync.jetbrains.cli.FileStatusSummary
+import io.github.localconfigsync.jetbrains.cli.CliException
+import io.github.localconfigsync.jetbrains.cli.LocalConfigCli
 import io.github.localconfigsync.jetbrains.cli.RepositorySummary
+import io.github.localconfigsync.jetbrains.cli.StatusResponse
 import io.github.localconfigsync.jetbrains.settings.LocalConfigConfigurable
 import io.github.localconfigsync.jetbrains.status.LocalConfigSnapshot
 import io.github.localconfigsync.jetbrains.status.LocalConfigStatusListener
 import io.github.localconfigsync.jetbrains.status.LocalConfigStatusService
-import io.github.localconfigsync.jetbrains.status.toDisplayName
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import java.awt.Insets
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Base64
+import java.util.Locale
 import javax.swing.BorderFactory
-import javax.swing.BoxLayout
-import javax.swing.JComponent
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.ListSelectionModel
+import javax.swing.SwingConstants
+import javax.swing.table.AbstractTableModel
+import javax.swing.table.DefaultTableCellRenderer
 
 class LocalConfigToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -44,14 +74,34 @@ class LocalConfigToolWindowFactory : ToolWindowFactory {
 
 private class LocalConfigToolWindowPanel(private val project: Project) : Disposable, LocalConfigStatusListener {
     private val service = LocalConfigStatusService.getInstance(project)
-    private val content = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    private val body = JPanel(BorderLayout())
     private val status = JBLabel("Checking").apply { font = font.deriveFont(Font.BOLD) }
     private val syncButton = JButton("Sync Now").apply { addActionListener { startSync(project) } }
     private val authButton = JButton("Git Auth").apply { addActionListener { startGitAuth(project) } }
+    private var response: StatusResponse? = null
+    private val reviewedConflicts = mutableMapOf<String, String>()
+    private var tableModel = FileStatusTableModel(emptyList())
+    private val table = JBTable(tableModel).apply {
+        selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        rowHeight = JBUI.scale(30)
+        showVerticalLines = false
+        showHorizontalLines = true
+        intercellSpacing = JBUI.size(0, 1)
+        tableHeader.reorderingAllowed = false
+        setDefaultRenderer(Any::class.java, FileStatusCellRenderer())
+        selectionModel.addListSelectionListener { updateConflictActions() }
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(event: MouseEvent) {
+                if (event.clickCount == 2) selectedFile()?.takeIf { it.status == "conflict" }?.let(::showDiff)
+            }
+        })
+    }
+    private val conflictActions = JPanel(FlowLayout(FlowLayout.LEFT, 6, 6))
+
     val component: JComponent = JPanel(BorderLayout()).apply {
         border = JBUI.Borders.empty(12)
         add(createHeader(), BorderLayout.NORTH)
-        add(JBScrollPane(content).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+        add(body, BorderLayout.CENTER)
     }
 
     init {
@@ -72,7 +122,6 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         }, BorderLayout.NORTH)
         add(JPanel(FlowLayout(FlowLayout.LEFT, 6, 8)).apply {
             add(JButton("Refresh").apply { addActionListener { service.refresh() } })
-            add(JButton("Setup").apply { addActionListener { startSetup(project) } })
             add(syncButton)
             add(authButton)
             add(JButton("Settings").apply {
@@ -82,110 +131,357 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
     }
 
     private fun render(snapshot: LocalConfigSnapshot) {
-        content.removeAll()
+        body.removeAll()
         when (snapshot) {
-            LocalConfigSnapshot.Loading -> {
-                status.text = "Checking"
-                status.foreground = UIUtil.getLabelForeground()
-                syncButton.isEnabled = false
-                authButton.isEnabled = false
-                content.add(message("Reading project mappings and repository state…"))
-            }
-            is LocalConfigSnapshot.Failure -> {
-                status.text = "Failed"
-                status.foreground = JBColor.namedColor("Label.errorForeground", JBColor.RED)
-                syncButton.isEnabled = false
-                authButton.isEnabled = false
-                content.add(section("Unable to load status", listOf(
-                    "Error: ${snapshot.error.code}",
-                    snapshot.error.message,
-                    snapshot.error.diagnostics.ifBlank { "Use Settings only if the bundled CLI needs an advanced override." },
-                ), error = true))
-                content.add(message("The status bar now opens this panel so failures remain visible and actionable."))
-            }
-            is LocalConfigSnapshot.Ready -> {
-                val response = snapshot.response
-                status.text = response.state.toDisplayName()
-                status.foreground = when (response.state) {
-                    "synced" -> JBColor.namedColor("Label.successForeground", JBColor(0x2E7D32, 0x73C991))
-                    "conflict", "failed" -> JBColor.namedColor("Label.errorForeground", JBColor.RED)
-                    else -> UIUtil.getLabelForeground()
-                }
-                syncButton.isEnabled = response.mappings.isNotEmpty()
-                authButton.isEnabled = response.repositories.any { it.type == "git" }
-                content.add(section("Project", listOf(
-                    response.projectPath,
-                    "Status: ${response.state.toDisplayName()}",
-                    response.lastSyncTime?.let { "Last sync: $it" } ?: "Last sync: Never",
-                )))
-                if (response.mappings.isEmpty()) {
-                    content.add(section("Get started", listOf(
-                        "No local configuration mapping is registered for this project.",
-                        "Choose Setup to authenticate with GitHub, select a Repository, and map a local or remote file.",
-                    ), action = JButton("Set Up This Project").apply { addActionListener { startSetup(project) } }))
-                } else {
-                    response.repositories.forEach { content.add(repositorySection(it)) }
-                    response.mappings.forEach { content.add(mappingSection(it)) }
-                }
-            }
+            LocalConfigSnapshot.Loading -> renderMessage("Reading mappings and comparing local and repository files…")
+            is LocalConfigSnapshot.Failure -> renderFailure(snapshot)
+            is LocalConfigSnapshot.Ready -> renderReady(snapshot.response)
         }
-        content.add(JPanel().apply { isOpaque = false })
-        content.revalidate()
-        content.repaint()
+        body.revalidate()
+        body.repaint()
     }
 
-    private fun repositorySection(repository: RepositorySummary): JComponent = section(
-        "Repository · ${repository.name.ifBlank { repository.id }}",
-        listOf(
-            "ID: ${repository.id}",
-            "Type: ${repository.type}",
-            "Status: ${repository.state.toDisplayName()}",
-            "Workspace: ${repository.workspacePath}",
-            "Remote revision: ${repository.remoteRevision ?: "Not available"}",
-        ),
-        action = if (repository.type == "git") JButton("Check Git Auth").apply {
-            addActionListener { startGitAuth(project, repository.id) }
-        } else null,
-    )
+    private fun renderMessage(text: String) {
+        response = null
+        status.text = "Checking"
+        status.foreground = UIUtil.getLabelForeground()
+        syncButton.isEnabled = false
+        authButton.isEnabled = false
+        body.add(JBLabel(text).apply {
+            foreground = UIUtil.getContextHelpForeground()
+            border = JBUI.Borders.empty(16, 8)
+        }, BorderLayout.NORTH)
+    }
 
-    private fun mappingSection(mapping: MappingSummary): JComponent = section(
-        "Mapping · ${mapping.targetPath}",
-        listOf(
-            "Repository: ${mapping.repositoryId}",
-            "Source: ${mapping.sourcePath}",
-            "Target: ${mapping.targetPath}",
-            "Mode: ${mapping.mode}",
-            "Git exclude: ${if (mapping.excludeConfigured) "Configured" else "Missing"}",
-            "Mapped files: ${mapping.mappedFiles.size}",
-        ),
-    )
+    private fun renderFailure(snapshot: LocalConfigSnapshot.Failure) {
+        response = null
+        status.text = "Failed"
+        status.foreground = errorColor()
+        syncButton.isEnabled = false
+        authButton.isEnabled = false
+        body.add(detailsCard(
+            "Unable to load status",
+            listOf(
+                "Error" to snapshot.error.code,
+                "Message" to snapshot.error.message,
+                "Diagnostics" to snapshot.error.diagnostics.ifBlank { "No additional diagnostics" },
+            ),
+            true,
+        ), BorderLayout.NORTH)
+    }
 
-    private fun section(title: String, lines: List<String>, error: Boolean = false, action: JComponent? = null): JComponent =
-        JPanel(BorderLayout()).apply {
-            alignmentX = JComponent.LEFT_ALIGNMENT
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createTitledBorder(title),
-                JBUI.Borders.empty(6, 8, 8, 8),
-            )
-            val text = JBTextArea(lines.joinToString("\n")).apply {
-                isEditable = false
+    private fun renderReady(value: StatusResponse) {
+        response = value
+        reviewedConflicts.clear()
+        status.text = syncStateName(value.state)
+        status.foreground = statusColor(value.state)
+        syncButton.isEnabled = value.mappings.isNotEmpty()
+        authButton.isEnabled = value.repositories.any { it.type == "git" }
+
+        val summary = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.emptyBottom(10)
+            add(JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
                 isOpaque = false
-                lineWrap = true
-                wrapStyleWord = true
-                border = JBUI.Borders.empty()
-                foreground = if (error) JBColor.namedColor("Label.errorForeground", JBColor.RED) else UIUtil.getLabelForeground()
-            }
-            add(text, BorderLayout.CENTER)
-            action?.let { add(JPanel(FlowLayout(FlowLayout.LEFT, 0, 6)).apply { add(it) }, BorderLayout.SOUTH) }
+                add(JButton("Project").apply { addActionListener { showProjectDetails(this, value) } })
+                if (value.repositories.isNotEmpty()) {
+                    val label = if (value.repositories.size == 1) "Repository" else "Repositories (${value.repositories.size})"
+                    add(JButton(label).apply { addActionListener { showRepositoryDetails(this, value.repositories) } })
+                }
+            }, BorderLayout.WEST)
+            add(JBLabel(formatLastSync(value.lastSyncTime)).apply {
+                foreground = UIUtil.getContextHelpForeground()
+                toolTipText = value.lastSyncTime
+            }, BorderLayout.EAST)
+        }
+        body.add(summary, BorderLayout.NORTH)
+
+        tableModel = FileStatusTableModel(value.files)
+        table.model = tableModel
+        table.columnModel.getColumn(0).preferredWidth = JBUI.scale(230)
+        table.columnModel.getColumn(1).preferredWidth = JBUI.scale(230)
+        table.columnModel.getColumn(2).preferredWidth = JBUI.scale(130)
+        table.emptyText.text = if (value.mappings.isEmpty()) {
+            "No mapped files. Add a mapping to start syncing."
+        } else {
+            "No files were found in the configured mappings."
         }
 
-    private fun message(text: String): JComponent = JBTextArea(text).apply {
-        isEditable = false
-        isOpaque = false
-        lineWrap = true
-        wrapStyleWord = true
-        border = JBUI.Borders.empty(8)
-        foreground = UIUtil.getContextHelpForeground()
-        alignmentX = JComponent.LEFT_ALIGNMENT
+        val tablePanel = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createCompoundBorder(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(),
+            )
+            add(JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.empty(6, 8)
+                add(JBLabel("Mapped files").apply { font = font.deriveFont(Font.BOLD) }, BorderLayout.WEST)
+                add(JButton("+ Add Mapping").apply { addActionListener { startSetup(project) } }, BorderLayout.EAST)
+            }, BorderLayout.NORTH)
+            add(JBScrollPane(table).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+            add(conflictActions, BorderLayout.SOUTH)
+        }
+        body.add(tablePanel, BorderLayout.CENTER)
+        updateConflictActions()
     }
+
+    private fun selectedFile(): FileStatusSummary? {
+        val selected = table.selectedRow
+        return if (selected >= 0) tableModel.rowAt(table.convertRowIndexToModel(selected)) else null
+    }
+
+    private fun updateConflictActions() {
+        conflictActions.removeAll()
+        val file = selectedFile()
+        if (file?.status == "conflict") {
+            conflictActions.add(JBLabel("Conflict").apply {
+                font = font.deriveFont(Font.BOLD)
+                foreground = errorColor()
+            })
+            conflictActions.add(JButton("View Diff").apply { addActionListener { showDiff(file) } })
+            val mapping = response?.mappings?.firstOrNull { it.id == file.mappingId }
+            if (mapping?.kind == "file" && mapping.mode == "copy") {
+                val reviewed = reviewedConflicts[conflictKey(file)] != null
+                conflictActions.add(JButton("Use Local").apply {
+                    isEnabled = reviewed
+                    addActionListener { resolve(file, "local") }
+                })
+                conflictActions.add(JButton("Use Repository").apply {
+                    isEnabled = reviewed
+                    addActionListener { resolve(file, "remote") }
+                })
+                if (!reviewed) {
+                    conflictActions.add(JBLabel("Review the diff to enable resolution.").apply {
+                        foreground = UIUtil.getContextHelpForeground()
+                    })
+                }
+            } else {
+                conflictActions.add(JBLabel("Open the diff and resolve this directory or symlink mapping manually.").apply {
+                    foreground = UIUtil.getContextHelpForeground()
+                })
+            }
+        }
+        conflictActions.isVisible = conflictActions.componentCount > 0
+        conflictActions.revalidate()
+        conflictActions.repaint()
+    }
+
+    private fun showDiff(file: FileStatusSummary) {
+        var result: FileDiffResponse? = null
+        object : Task.Backgroundable(project, "Loading Local Config Diff", true) {
+            override fun run(indicator: ProgressIndicator) {
+                result = LocalConfigCli.diff(project, file.mappingId, file.remotePath)
+            }
+
+            override fun onSuccess() {
+                result?.let(::openDiff)
+            }
+
+            override fun onThrowable(error: Throwable) = reportFailure(project, error)
+        }.queue()
+    }
+
+    private fun openDiff(diff: FileDiffResponse) {
+        reviewedConflicts["${diff.mappingId}\u0000${diff.remotePath}"] = diff.remoteRevision
+        updateConflictActions()
+        val fileType = FileTypeManager.getInstance().getFileTypeByFileName(diff.localPath)
+        val factory = DiffContentFactory.getInstance()
+        val local = factory.create(project, decode(diff.localContent), fileType)
+        val remote = factory.create(project, decode(diff.remoteContent), fileType)
+        DiffManager.getInstance().showDiff(
+            project,
+            SimpleDiffRequest(
+                "Local Config Conflict · ${diff.localPath}",
+                local,
+                remote,
+                "Local · ${diff.localPath}${if (diff.localExists) "" else " (deleted)"}",
+                "Repository · ${diff.remotePath}${if (diff.remoteExists) "" else " (deleted)"}",
+            ),
+        )
+    }
+
+    private fun resolve(file: FileStatusSummary, strategy: String) {
+        val useLocal = strategy == "local"
+        val message = if (useLocal) {
+            "Use the local file and publish it to the repository?\n\nRemote changes to this mapped file will be replaced by a new, explicit commit."
+        } else {
+            "Use the repository file and replace the local file?\n\nUnpublished local changes to this mapped file will be discarded."
+        }
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            message,
+            "Resolve Local Config Conflict",
+            if (useLocal) "Use Local" else "Use Repository",
+            "Cancel",
+            Messages.getWarningIcon(),
+        ) == Messages.YES
+        if (!confirmed) return
+        val expectedRevision = reviewedConflicts[conflictKey(file)] ?: return
+        runBackground(project, "Resolving Local Config Conflict") { indicator ->
+            indicator.text = "Applying the selected version safely…"
+            val arguments = listOf(
+                "resolve", "--project", project.basePath.orEmpty(),
+                "--mapping", file.mappingId, "--path", file.remotePath,
+                "--expected-revision", expectedRevision, "--strategy", strategy,
+            )
+            try {
+                LocalConfigCli.command(project, arguments)
+            } catch (error: CliException) {
+                if (error.code != "unsafe_secret_pattern") throw error
+                if (!confirmSensitiveFiles(project, error.paths)) return@runBackground
+                LocalConfigCli.command(project, arguments + "--allow-sensitive")
+            }
+        }
+    }
+
+    private fun showProjectDetails(anchor: Component, value: StatusResponse) = showDetails(
+        anchor,
+        "Project",
+        listOf(
+            "Path" to value.projectPath,
+            "Status" to syncStateName(value.state),
+            "Last sync" to formatLastSync(value.lastSyncTime).removePrefix("Last sync: "),
+            "Mappings" to value.mappings.size.toString(),
+        ),
+    )
+
+    private fun showRepositoryDetails(anchor: Component, repositories: List<RepositorySummary>) {
+        val values = repositories.flatMapIndexed { index, repository ->
+            buildList {
+                if (repositories.size > 1) add("Repository ${index + 1}" to repository.name.ifBlank { repository.id })
+                add("Name" to repository.name.ifBlank { repository.id })
+                add("ID" to repository.id)
+                add("Type" to repository.type)
+                add("Status" to syncStateName(repository.state))
+                add("Workspace" to repository.workspacePath)
+                add("Revision" to (repository.remoteRevision ?: "Not available"))
+            }
+        }
+        showDetails(anchor, if (repositories.size == 1) "Repository" else "Repositories", values)
+    }
+
+    private fun showDetails(anchor: Component, title: String, values: List<Pair<String, String>>) {
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(detailsCard(null, values), null)
+            .setTitle(title)
+            .setResizable(true)
+            .setMovable(true)
+            .setRequestFocus(false)
+            .createPopup()
+            .showUnderneathOf(anchor)
+    }
+
+    private fun detailsCard(title: String?, values: List<Pair<String, String>>, error: Boolean = false): JComponent =
+        JPanel(GridBagLayout()).apply {
+            border = JBUI.Borders.empty(10, 12)
+            var row = 0
+            title?.let {
+                add(JBLabel(it).apply {
+                    font = font.deriveFont(Font.BOLD, font.size2D + 1f)
+                    if (error) foreground = errorColor()
+                }, GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = row++
+                    gridwidth = 2
+                    anchor = GridBagConstraints.WEST
+                    insets = Insets(0, 0, JBUI.scale(10), 0)
+                })
+            }
+            values.forEach { (label, value) ->
+                add(JBLabel(label).apply { foreground = UIUtil.getContextHelpForeground() }, GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = row
+                    anchor = GridBagConstraints.NORTHWEST
+                    insets = Insets(2, 0, 5, JBUI.scale(14))
+                })
+                add(JBLabel(value).apply {
+                    toolTipText = value
+                    if (error) foreground = errorColor()
+                }, GridBagConstraints().apply {
+                    gridx = 1
+                    gridy = row++
+                    weightx = 1.0
+                    fill = GridBagConstraints.HORIZONTAL
+                    anchor = GridBagConstraints.NORTHWEST
+                    insets = Insets(2, 0, 5, 0)
+                })
+            }
+        }
+
+    private fun decode(content: String): String = String(Base64.getDecoder().decode(content), StandardCharsets.UTF_8)
+
+    private fun conflictKey(file: FileStatusSummary): String = "${file.mappingId}\u0000${file.remotePath}"
+
+    private fun formatLastSync(value: String?): String {
+        if (value.isNullOrBlank()) return "Last sync: Never"
+        val formatted = runCatching {
+            DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+                .withLocale(Locale.getDefault())
+                .withZone(ZoneId.systemDefault())
+                .format(Instant.parse(value))
+        }.getOrElse { value }
+        return "Last sync: $formatted"
+    }
+}
+
+private class FileStatusTableModel(private val rows: List<FileStatusSummary>) : AbstractTableModel() {
+    private val columns = listOf("Local File", "Repository File", "Status")
+
+    override fun getRowCount(): Int = rows.size
+    override fun getColumnCount(): Int = columns.size
+    override fun getColumnName(column: Int): String = columns[column]
+    override fun getValueAt(row: Int, column: Int): Any = when (column) {
+        0 -> rows[row].localPath
+        1 -> rows[row].remotePath
+        else -> rows[row].status
+    }
+
+    fun rowAt(row: Int): FileStatusSummary = rows[row]
+}
+
+private class FileStatusCellRenderer : DefaultTableCellRenderer() {
+    override fun getTableCellRendererComponent(
+        table: javax.swing.JTable,
+        value: Any?,
+        isSelected: Boolean,
+        hasFocus: Boolean,
+        row: Int,
+        column: Int,
+    ): Component {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+        border = JBUI.Borders.empty(0, 8)
+        horizontalAlignment = if (column == 2) SwingConstants.LEFT else SwingConstants.LEADING
+        if (column == 2) {
+            val state = value?.toString().orEmpty()
+            text = fileStatusName(state)
+            if (!isSelected) foreground = statusColor(state)
+            toolTipText = when (state) {
+                "local_changes" -> "The local file needs to be pushed"
+                "remote_changes" -> "The local file needs to be updated"
+                "conflict" -> "Both sides changed; review the diff before choosing a version"
+                else -> "Local and repository files match"
+            }
+        } else {
+            toolTipText = value?.toString()
+        }
+        return this
+    }
+}
+
+private fun fileStatusName(state: String): String = when (state) {
+    "local_changes" -> "Push required"
+    "remote_changes" -> "Update available"
+    "conflict" -> "Conflict"
+    else -> "Synced"
+}
+
+private fun syncStateName(state: String): String = state
+    .split('_')
+    .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+
+private fun errorColor(): JBColor = JBColor.namedColor("Label.errorForeground", JBColor(0xC62828, 0xF14C4C))
+
+private fun statusColor(state: String): JBColor = when (state) {
+    "synced" -> JBColor.namedColor("Label.successForeground", JBColor(0x2E7D32, 0x73C991))
+    "conflict", "failed" -> errorColor()
+    "local_changes", "remote_changes", "pending" -> JBColor.namedColor("Label.warningForeground", JBColor(0x9A6700, 0xCCA700))
+    else -> JBColor.namedColor("Label.foreground", JBColor.BLACK)
 }

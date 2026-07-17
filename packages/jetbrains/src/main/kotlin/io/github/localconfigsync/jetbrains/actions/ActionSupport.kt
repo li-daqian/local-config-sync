@@ -25,9 +25,12 @@ internal fun runBackground(project: Project, title: String, operation: (Progress
 
 internal fun reportFailure(project: Project, error: Throwable) {
     val cli = error as? CliException
-    LocalConfigStatusService.getInstance(project).recordFailure(
-        cli ?: CliException("operation_failed", error.message ?: "Operation failed"),
-    )
+    val statusService = LocalConfigStatusService.getInstance(project)
+    if (cli?.code == "conflict") {
+        statusService.refresh()
+    } else {
+        statusService.recordFailure(cli ?: CliException("operation_failed", error.message ?: "Operation failed"))
+    }
     notify(project, "${cli?.code ?: "error"}: ${error.message}", NotificationType.ERROR)
 }
 

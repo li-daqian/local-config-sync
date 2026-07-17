@@ -119,6 +119,8 @@ Commands:
   preview
   link [--kind file|directory] [--initial-strategy auto|local|remote]
   pull | push | sync
+  diff
+  resolve --expected-revision <revision> --strategy local|remote
   status
   doctor
   unlink`)
@@ -238,6 +240,61 @@ func run(rawArgs []string) (activeCommand string, err error) {
 			payload["projectPath"] = project
 		}
 		return activeCommand, success(activeCommand, payload, jsonOutput)
+	case "diff":
+		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--mapping": true, "--path": true}, map[string]bool{})
+		if err != nil {
+			return activeCommand, err
+		}
+		mappingID, err := required(parsed.Options, "--mapping")
+		if err != nil {
+			return activeCommand, err
+		}
+		path, err := required(parsed.Options, "--path")
+		if err != nil {
+			return activeCommand, err
+		}
+		project := parsed.Options["--project"]
+		if project == "" {
+			project = "."
+		}
+		diff, err := service.Diff(project, mappingID, path)
+		if err != nil {
+			return activeCommand, err
+		}
+		content, _ := json.Marshal(diff)
+		payload := map[string]any{}
+		_ = json.Unmarshal(content, &payload)
+		return activeCommand, success(activeCommand, payload, jsonOutput)
+	case "resolve":
+		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true, "--mapping": true, "--path": true, "--expected-revision": true, "--strategy": true}, map[string]bool{"--allow-sensitive": true})
+		if err != nil {
+			return activeCommand, err
+		}
+		mappingID, err := required(parsed.Options, "--mapping")
+		if err != nil {
+			return activeCommand, err
+		}
+		path, err := required(parsed.Options, "--path")
+		if err != nil {
+			return activeCommand, err
+		}
+		strategy, err := required(parsed.Options, "--strategy")
+		if err != nil {
+			return activeCommand, err
+		}
+		project := parsed.Options["--project"]
+		if project == "" {
+			project = "."
+		}
+		expectedRevision, err := required(parsed.Options, "--expected-revision")
+		if err != nil {
+			return activeCommand, err
+		}
+		resolved, err := service.ResolveConflict(project, mappingID, path, expectedRevision, core.ConflictStrategy(strategy), parsed.Flags["--allow-sensitive"])
+		if err != nil {
+			return activeCommand, err
+		}
+		return activeCommand, success(activeCommand, map[string]any{"projectPath": project, "repository": resolved}, jsonOutput)
 	case "status":
 		parsed, err := parseArguments(args[1:], map[string]bool{"--project": true}, map[string]bool{})
 		if err != nil {

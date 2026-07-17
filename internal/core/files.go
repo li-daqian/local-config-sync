@@ -116,6 +116,11 @@ func SnapshotsEqual(a FileSnapshot, aOK bool, b FileSnapshot, bOK bool) bool {
 	return aOK == bOK && (!aOK || (a.SHA256 == b.SHA256 && a.Size == b.Size && a.Deleted == b.Deleted))
 }
 
+func SnapshotContent(content []byte) FileSnapshot {
+	sum := sha256.Sum256(content)
+	return FileSnapshot{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+}
+
 func CopyTree(source, target string) error {
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

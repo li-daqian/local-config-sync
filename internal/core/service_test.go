@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/base64"
 	"errors"
 	"os"
 	"os/exec"
@@ -425,11 +426,80 @@ func TestGitDriverStopsConcurrentChanges(t *testing.T) {
 	runTestCommand(t, seed, "git", "add", "business/config/value.yml")
 	runTestCommand(t, seed, "git", "commit", "-m", "remote conflict")
 	runTestCommand(t, seed, "git", "push")
+	status, statusErr := service.Status(project)
+	if statusErr != nil || status.State != "conflict" || len(status.Files) != 1 || status.Files[0].Status != "conflict" {
+		t.Fatalf("expected file-level Git conflict, got %#v, %v", status, statusErr)
+	}
 	_, err = service.Sync(SyncOptions{Project: project}, "sync")
 	requireErrorCode(t, err, ErrConflict)
 	content, _ := os.ReadFile(localFile)
 	if string(content) != "value: local\n" {
 		t.Fatalf("local content was overwritten: %q", content)
+	}
+}
+
+func TestGitCopyConflictResolutionRestoresDirtyWorkspaceSafely(t *testing.T) {
+	root := t.TempDir()
+	bare, seed := createRemote(t, root)
+	seedFile := filepath.Join(seed, "business/application-dev.yml")
+	if err := os.MkdirAll(filepath.Dir(seedFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(seedFile, []byte("value: baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, seed, "git", "add", "business/application-dev.yml")
+	runTestCommand(t, seed, "git", "commit", "-m", "add config")
+	runTestCommand(t, seed, "git", "push")
+
+	project := initProject(t, root, "business")
+	service := NewService(filepath.Join(root, "home"))
+	if _, err := service.Init(LinkModeCopy); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := service.Repositories.AddGit("personal", "", bare, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, repository.WorkspacePath, "git", "config", "user.name", "Local Config Test")
+	runTestCommand(t, repository.WorkspacePath, "git", "config", "user.email", "test@example.invalid")
+	mapping, err := service.Link(LinkInput{
+		Project: project, RepositoryID: "personal", SourcePath: "business/application-dev.yml",
+		TargetPath: "application-dev.yml", Mode: LinkModeCopy, Kind: MappingKindFile,
+		InitialStrategy: InitialStrategyRemote,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(SyncOptions{Project: project}, "sync"); err != nil {
+		t.Fatal(err)
+	}
+	localFile := filepath.Join(project, "application-dev.yml")
+	workspaceFile := filepath.Join(repository.WorkspacePath, "business/application-dev.yml")
+	if err := os.WriteFile(localFile, []byte("value: local winner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A push race can leave the copy staged in the managed workspace even though no push occurred.
+	if err := os.WriteFile(workspaceFile, []byte("value: local winner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(seedFile, []byte("value: remote loser\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, seed, "git", "add", "business/application-dev.yml")
+	runTestCommand(t, seed, "git", "commit", "-m", "remote conflict")
+	runTestCommand(t, seed, "git", "push")
+	diff, err := service.Diff(project, mapping.ID, mapping.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveConflict(project, mapping.ID, mapping.SourcePath, diff.RemoteRevision, ConflictStrategyLocal, false); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, seed, "git", "pull", "--ff-only")
+	content, _ := os.ReadFile(seedFile)
+	if string(content) != "value: local winner\n" {
+		t.Fatalf("resolved Git content mismatch: %q", content)
 	}
 }
 
@@ -510,6 +580,108 @@ func TestCopyModeRoundTrip(t *testing.T) {
 	content, _ := os.ReadFile(filepath.Join(repositoryPath, "sample/config/value.yml"))
 	if string(content) != "value: two\n" {
 		t.Fatalf("copy did not reconcile: %q", content)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryPath, "sample/config/value.yml"), []byte("value: three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(SyncOptions{Project: project}, "sync"); err != nil {
+		t.Fatal(err)
+	}
+	content, _ = os.ReadFile(filepath.Join(project, "config/value.yml"))
+	if string(content) != "value: three\n" {
+		t.Fatalf("remote copy update did not reconcile locally: %q", content)
+	}
+}
+
+func TestFileStatusDiffAndExplicitConflictResolution(t *testing.T) {
+	root := t.TempDir()
+	project := initProject(t, root, "project")
+	repositoryPath := filepath.Join(root, "repository")
+	remoteFile := filepath.Join(repositoryPath, "project/application-dev.yml")
+	if err := os.MkdirAll(filepath.Dir(remoteFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remoteFile, []byte("value: baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(filepath.Join(root, "home"))
+	if _, err := service.Init(LinkModeCopy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Repositories.AddLocalFolder("local", "", repositoryPath); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := service.Link(LinkInput{
+		Project: project, RepositoryID: "local", SourcePath: "project/application-dev.yml",
+		TargetPath: "application-dev.yml", Mode: LinkModeCopy, Kind: MappingKindFile,
+		InitialStrategy: InitialStrategyRemote,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(SyncOptions{Project: project}, "sync"); err != nil {
+		t.Fatal(err)
+	}
+	localFile := filepath.Join(project, "application-dev.yml")
+	if err := os.WriteFile(localFile, []byte("value: local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.Status(project)
+	if err != nil || len(status.Files) != 1 || status.Files[0].Status != "local_changes" {
+		t.Fatalf("expected local_changes, got %#v, %v", status.Files, err)
+	}
+	if err := os.WriteFile(remoteFile, []byte("value: remote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err = service.Status(project)
+	if err != nil || status.State != "conflict" || status.Files[0].Status != "conflict" {
+		t.Fatalf("expected conflict, got %#v, %v", status, err)
+	}
+	diff, err := service.Diff(project, mapping.ID, mapping.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localContent, _ := base64.StdEncoding.DecodeString(diff.LocalContent)
+	remoteContent, _ := base64.StdEncoding.DecodeString(diff.RemoteContent)
+	if string(localContent) != "value: local\n" || string(remoteContent) != "value: remote\n" {
+		t.Fatalf("unexpected diff content local=%q remote=%q", localContent, remoteContent)
+	}
+	if err := os.WriteFile(remoteFile, []byte("value: changed after review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ResolveConflict(project, mapping.ID, mapping.SourcePath, diff.RemoteRevision, ConflictStrategyLocal, false)
+	requireErrorCode(t, err, ErrConflict)
+	diff, err = service.Diff(project, mapping.ID, mapping.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveConflict(project, mapping.ID, mapping.SourcePath, diff.RemoteRevision, ConflictStrategyLocal, false); err != nil {
+		t.Fatal(err)
+	}
+	content, _ := os.ReadFile(remoteFile)
+	if string(content) != "value: local\n" {
+		t.Fatalf("local resolution did not publish local content: %q", content)
+	}
+	if err := os.WriteFile(remoteFile, []byte("value: remote winner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err = service.Status(project)
+	if err != nil || status.Files[0].Status != "remote_changes" {
+		t.Fatalf("expected remote_changes, got %#v, %v", status.Files, err)
+	}
+	if err := os.WriteFile(localFile, []byte("value: local loser\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diff, err = service.Diff(project, mapping.ID, mapping.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveConflict(project, mapping.ID, mapping.SourcePath, diff.RemoteRevision, ConflictStrategyRemote, false); err != nil {
+		t.Fatal(err)
+	}
+	content, _ = os.ReadFile(localFile)
+	if string(content) != "value: remote winner\n" {
+		t.Fatalf("remote resolution did not update local content: %q", content)
 	}
 }
 

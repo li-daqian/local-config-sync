@@ -35,6 +35,16 @@ data class MappingSummary(
     val excludeConfigured: Boolean = false,
 )
 
+data class FileStatusSummary(
+    val mappingId: String = "",
+    val repositoryId: String = "",
+    val localPath: String = "",
+    val remotePath: String = "",
+    val status: String = "synced",
+    val localExists: Boolean = true,
+    val remoteExists: Boolean = true,
+)
+
 data class StatusResponse(
     val ok: Boolean = false,
     val command: String = "status",
@@ -42,7 +52,23 @@ data class StatusResponse(
     val state: String = "not_configured",
     val repositories: List<RepositorySummary> = emptyList(),
     val mappings: List<MappingSummary> = emptyList(),
+    val files: List<FileStatusSummary> = emptyList(),
     val lastSyncTime: String? = null,
+)
+
+data class FileDiffResponse(
+    val ok: Boolean = false,
+    val command: String = "diff",
+    val mappingId: String = "",
+    val repositoryId: String = "",
+    val localPath: String = "",
+    val remotePath: String = "",
+    val remoteRevision: String = "",
+    val localExists: Boolean = false,
+    val remoteExists: Boolean = false,
+    val contentEncoding: String = "base64",
+    val localContent: String = "",
+    val remoteContent: String = "",
 )
 
 data class RepositoryOptions(

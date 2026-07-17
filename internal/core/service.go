@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -511,11 +512,18 @@ func (s *Service) reconcileCopiesFromWorkspace(mappings []Mapping, state Reposit
 		if err != nil {
 			return err
 		}
+		workspaceSnapshot, err := SnapshotPath(source, mapping.SourcePath, mapping.Kind)
+		if err != nil {
+			return err
+		}
+		if !snapshotChanged(workspaceSnapshot, state.Files, mapping.SourcePath) {
+			continue
+		}
 		targetSnapshot, err := SnapshotPath(target, mapping.SourcePath, mapping.Kind)
 		if err != nil {
 			return err
 		}
-		if snapshotChanged(targetSnapshot, state.Files, mapping.SourcePath) {
+		if snapshotChanged(targetSnapshot, state.Files, mapping.SourcePath) && !mapsEqual(workspaceSnapshot, targetSnapshot) {
 			return NewError(ErrConflict, "Copy target has local changes while repository changed", map[string]any{"mappingId": mapping.ID})
 		}
 		if mapping.Kind == MappingKindFile {
@@ -604,6 +612,64 @@ func (s *Service) updateState(repository Repository, mappings []Mapping, state R
 	return state, nil
 }
 
+func classifyFile(local FileSnapshot, localOK bool, remote FileSnapshot, remoteOK bool, baseline FileSnapshot, baselineOK bool) string {
+	localChanged := !SnapshotsEqual(local, localOK, baseline, baselineOK)
+	remoteChanged := !SnapshotsEqual(remote, remoteOK, baseline, baselineOK)
+	switch {
+	case localChanged && remoteChanged && !SnapshotsEqual(local, localOK, remote, remoteOK):
+		return "conflict"
+	case localChanged && !remoteChanged:
+		return "local_changes"
+	case remoteChanged && !localChanged:
+		return "remote_changes"
+	default:
+		return "synced"
+	}
+}
+
+func mappingLocalPath(mapping Mapping, remotePath string) string {
+	if remotePath == mapping.SourcePath {
+		return mapping.TargetPath
+	}
+	relative := strings.TrimPrefix(remotePath, strings.TrimSuffix(mapping.SourcePath, "/")+"/")
+	return strings.TrimSuffix(mapping.TargetPath, "/") + "/" + relative
+}
+
+func mappingFileStatuses(mapping Mapping, local, remote, baseline map[string]FileSnapshot) []FileStatusSummary {
+	paths := map[string]bool{}
+	for path := range local {
+		paths[path] = true
+	}
+	for path := range remote {
+		if inScope(path, []string{mapping.SourcePath}) {
+			paths[path] = true
+		}
+	}
+	for path := range baseline {
+		if inScope(path, []string{mapping.SourcePath}) {
+			paths[path] = true
+		}
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	result := make([]FileStatusSummary, 0, len(ordered))
+	for _, path := range ordered {
+		localFile, localOK := local[path]
+		remoteFile, remoteOK := remote[path]
+		baselineFile, baselineOK := baseline[path]
+		result = append(result, FileStatusSummary{
+			MappingID: mapping.ID, RepositoryID: mapping.RepositoryID,
+			LocalPath: mappingLocalPath(mapping, path), RemotePath: path,
+			Status:      classifyFile(localFile, localOK, remoteFile, remoteOK, baselineFile, baselineOK),
+			LocalExists: localOK, RemoteExists: remoteOK,
+		})
+	}
+	return result
+}
+
 func uniqueProjectNames(mappings []Mapping) string {
 	seen := map[string]bool{}
 	names := []string{}
@@ -651,6 +717,8 @@ func (s *Service) Sync(options SyncOptions, operation string) ([]SyncResult, err
 					return err
 				}
 				state.RemoteRevision = pulled.RemoteRevision
+			}
+			if operation == "pull" || operation == "sync" {
 				if err := s.reconcileCopiesFromWorkspace(group.Mappings, state); err != nil {
 					return err
 				}
@@ -705,10 +773,12 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 	if len(mappings) == 0 {
-		return StatusResult{ProjectPath: project.Root, State: "not_configured", Repositories: []RepositorySummary{}, Mappings: []MappingSummary{}}, nil
+		return StatusResult{ProjectPath: project.Root, State: "not_configured", Repositories: []RepositorySummary{}, Mappings: []MappingSummary{}, Files: []FileStatusSummary{}}, nil
 	}
-	result := StatusResult{ProjectPath: project.Root, State: "synced", Repositories: []RepositorySummary{}, Mappings: []MappingSummary{}}
+	result := StatusResult{ProjectPath: project.Root, State: "synced", Repositories: []RepositorySummary{}, Mappings: []MappingSummary{}, Files: []FileStatusSummary{}}
 	seen := map[string]bool{}
+	remoteSnapshots := map[string]map[string]FileSnapshot{}
+	repositoryStates := map[string]RepositoryState{}
 	for _, mapping := range mappings {
 		if seen[mapping.RepositoryID] {
 			continue
@@ -731,6 +801,16 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 		if status.State != "synced" {
 			result.State = "pending"
 		}
+		remoteSnapshot, err := s.Repositories.Driver(repository).Snapshot(DriverContext{Repository: repository, Scopes: scopes}, status.RemoteRevision)
+		if err != nil {
+			return StatusResult{}, err
+		}
+		state, err := s.Storage.ReadState(repository.ID)
+		if err != nil {
+			return StatusResult{}, err
+		}
+		remoteSnapshots[repository.ID] = remoteSnapshot
+		repositoryStates[repository.ID] = state
 		result.Repositories = append(result.Repositories, RepositorySummary{ID: repository.ID, Name: repository.Name, Type: repository.Type, State: status.State, WorkspacePath: repository.WorkspacePath, RemoteRevision: status.RemoteRevision, Capabilities: status.Capabilities})
 	}
 	for _, mapping := range mappings {
@@ -738,15 +818,26 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 		if err != nil {
 			return StatusResult{}, err
 		}
+		snapshotPath := target
+		if mapping.Mode == LinkModeSymlink {
+			repository, err := s.Repositories.Get(mapping.RepositoryID)
+			if err != nil {
+				return StatusResult{}, err
+			}
+			snapshotPath, err = ResolveInside(repository.WorkspacePath, mapping.SourcePath)
+			if err != nil {
+				return StatusResult{}, err
+			}
+		}
 		files := []string{}
 		if mapping.Kind == MappingKindFile {
-			if exists, err := fileExists(target); err != nil {
+			if exists, err := fileExists(snapshotPath); err != nil {
 				return StatusResult{}, err
 			} else if exists {
 				files = append(files, mapping.TargetPath)
 			}
 		} else {
-			files, err = ListFiles(target)
+			files, err = ListFiles(snapshotPath)
 			if err != nil {
 				return StatusResult{}, err
 			}
@@ -759,6 +850,19 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 			return StatusResult{}, err
 		}
 		result.Mappings = append(result.Mappings, MappingSummary{ID: mapping.ID, RepositoryID: mapping.RepositoryID, SourcePath: mapping.SourcePath, TargetPath: mapping.TargetPath, Mode: mapping.Mode, Kind: mapping.Kind, MappedFiles: files, ExcludeConfigured: excluded})
+		localSnapshot, err := SnapshotPath(snapshotPath, mapping.SourcePath, mapping.Kind)
+		if err != nil {
+			return StatusResult{}, err
+		}
+		fileStatuses := mappingFileStatuses(mapping, localSnapshot, remoteSnapshots[mapping.RepositoryID], repositoryStates[mapping.RepositoryID].Files)
+		for _, file := range fileStatuses {
+			if file.Status == "conflict" {
+				result.State = "conflict"
+			} else if file.Status != "synced" && result.State == "synced" {
+				result.State = "pending"
+			}
+		}
+		result.Files = append(result.Files, fileStatuses...)
 	}
 	lastTimes := []string{}
 	for _, repository := range result.Repositories {
@@ -775,6 +879,174 @@ func (s *Service) Status(projectPath string) (StatusResult, error) {
 		result.LastSyncTime = lastTimes[len(lastTimes)-1]
 	}
 	return result, nil
+}
+
+func (s *Service) projectMapping(projectPath, mappingID, remotePath string) (ResolvedProject, Mapping, Repository, string, error) {
+	project, err := ResolveProject(projectPath)
+	if err != nil {
+		return ResolvedProject{}, Mapping{}, Repository{}, "", err
+	}
+	mappings, err := s.Mappings.ForProject(project.Root)
+	if err != nil {
+		return ResolvedProject{}, Mapping{}, Repository{}, "", err
+	}
+	for _, mapping := range mappings {
+		if mapping.ID != mappingID {
+			continue
+		}
+		path, err := SafeRelativePath(remotePath, "path")
+		if err != nil {
+			return ResolvedProject{}, Mapping{}, Repository{}, "", err
+		}
+		if !inScope(path, []string{mapping.SourcePath}) {
+			return ResolvedProject{}, Mapping{}, Repository{}, "", Invalidf("path is outside the selected mapping")
+		}
+		repository, err := s.Repositories.Get(mapping.RepositoryID)
+		return project, mapping, repository, path, err
+	}
+	return ResolvedProject{}, Mapping{}, Repository{}, "", NewError(ErrNotConfigured, "Mapping was not found for this project", map[string]any{"mappingId": mappingID})
+}
+
+func (s *Service) Diff(projectPath, mappingID, remotePath string) (FileDiff, error) {
+	project, mapping, repository, path, err := s.projectMapping(projectPath, mappingID, remotePath)
+	if err != nil {
+		return FileDiff{}, err
+	}
+	driver := s.Repositories.Driver(repository)
+	status, err := driver.Inspect(DriverContext{Repository: repository, Scopes: []string{path}})
+	if err != nil {
+		return FileDiff{}, err
+	}
+	remoteContent, remoteExists, err := driver.ReadFile(DriverContext{Repository: repository, Scopes: []string{path}}, status.RemoteRevision, path)
+	if err != nil {
+		return FileDiff{}, err
+	}
+	localPath := mappingLocalPath(mapping, path)
+	localAbsolute, err := ResolveInside(project.Root, localPath)
+	if err != nil {
+		return FileDiff{}, err
+	}
+	localContent, err := os.ReadFile(localAbsolute)
+	localExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return FileDiff{}, err
+	}
+	return FileDiff{
+		MappingID: mapping.ID, RepositoryID: repository.ID,
+		LocalPath: localPath, RemotePath: path, RemoteRevision: status.RemoteRevision,
+		LocalExists: localExists, RemoteExists: remoteExists, ContentEncoding: "base64",
+		LocalContent:  base64.StdEncoding.EncodeToString(localContent),
+		RemoteContent: base64.StdEncoding.EncodeToString(remoteContent),
+	}, nil
+}
+
+func replaceOrRemove(source, target string, exists bool) error {
+	if exists {
+		return CopyFileReplace(source, target)
+	}
+	err := os.Remove(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) ResolveConflict(projectPath, mappingID, remotePath, expectedRevision string, strategy ConflictStrategy, allowSensitive bool) (SyncResult, error) {
+	project, mapping, repository, path, err := s.projectMapping(projectPath, mappingID, remotePath)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	if strategy != ConflictStrategyLocal && strategy != ConflictStrategyRemote {
+		return SyncResult{}, Invalidf("strategy must be local or remote")
+	}
+	if mapping.Mode != LinkModeCopy || mapping.Kind != MappingKindFile || path != mapping.SourcePath {
+		return SyncResult{}, NewError(ErrUnsupportedCapability, "Single-file conflict resolution currently requires a copy-mode file mapping", map[string]any{"mappingId": mapping.ID})
+	}
+	var result SyncResult
+	err = WithRepositoryLock(filepath.Join(s.Paths.Locks, repository.ID+".lock"), func() error {
+		driver := s.Repositories.Driver(repository)
+		state, err := s.Storage.ReadState(repository.ID)
+		if err != nil {
+			return err
+		}
+		context := DriverContext{Repository: repository, Scopes: []string{path}, ExpectedRevision: state.RemoteRevision}
+		before, err := driver.Inspect(context)
+		if err != nil {
+			return err
+		}
+		if expectedRevision == "" || before.RemoteRevision != expectedRevision {
+			return NewError(ErrConflict, "Repository changed after the diff was reviewed; refresh and review it again", map[string]any{"mappingId": mapping.ID, "paths": []string{path}})
+		}
+		remoteSnapshot, err := driver.Snapshot(context, before.RemoteRevision)
+		if err != nil {
+			return err
+		}
+		localAbsolute, err := ResolveInside(project.Root, mapping.TargetPath)
+		if err != nil {
+			return err
+		}
+		localSnapshot, err := SnapshotPath(localAbsolute, path, MappingKindFile)
+		if err != nil {
+			return err
+		}
+		files := mappingFileStatuses(mapping, localSnapshot, remoteSnapshot, state.Files)
+		if len(files) != 1 || files[0].Status != "conflict" {
+			return NewError(ErrConflict, "File status changed; refresh and review the latest diff before resolving", map[string]any{"mappingId": mapping.ID, "paths": []string{path}})
+		}
+		localExists := files[0].LocalExists
+		if err := driver.RestoreWorkspace(context); err != nil {
+			return err
+		}
+		pulled, err := driver.Pull(context)
+		if err != nil {
+			return err
+		}
+		if pulled.RemoteRevision != before.RemoteRevision {
+			return NewError(ErrConflict, "Repository changed while resolving; refresh and review the latest diff", map[string]any{"mappingId": mapping.ID, "paths": []string{path}})
+		}
+		state.RemoteRevision = pulled.RemoteRevision
+		workspaceAbsolute, err := ResolveInside(repository.WorkspacePath, path)
+		if err != nil {
+			return err
+		}
+		if strategy == ConflictStrategyRemote {
+			if err := replaceOrRemove(workspaceAbsolute, localAbsolute, files[0].RemoteExists); err != nil {
+				return err
+			}
+		} else {
+			if err := replaceOrRemove(localAbsolute, workspaceAbsolute, localExists); err != nil {
+				return err
+			}
+			matches, err := ScanSensitive(repository.WorkspacePath, []string{path})
+			if err != nil {
+				return err
+			}
+			if err := AssertNoSensitive(matches, allowSensitive); err != nil {
+				return err
+			}
+			pushed, err := driver.Push(DriverContext{Repository: repository, Scopes: []string{path}, ExpectedRevision: state.RemoteRevision}, "chore("+mapping.ProjectName+"): resolve local config conflict")
+			if err != nil {
+				return err
+			}
+			state.RemoteRevision = pushed.RemoteRevision
+		}
+		delete(state.Files, path)
+		resolved, err := SnapshotPath(workspaceAbsolute, path, MappingKindFile)
+		if err != nil {
+			return err
+		}
+		for resolvedPath, snapshot := range resolved {
+			state.Files[resolvedPath] = snapshot
+		}
+		state.LastSyncTime = time.Now().UTC().Format(time.RFC3339Nano)
+		state.LastError = nil
+		if err := s.Storage.WriteState(state); err != nil {
+			return err
+		}
+		result = SyncResult{RepositoryID: repository.ID, State: "synced", RemoteRevision: state.RemoteRevision, LastSyncTime: state.LastSyncTime}
+		return nil
+	})
+	return result, err
 }
 
 func (s *Service) Doctor(projectPath, repositoryID string) (DiagnosticResult, error) {

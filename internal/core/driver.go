@@ -18,6 +18,9 @@ type PushResult struct {
 type RepositoryDriver interface {
 	Prepare(Repository) error
 	Inspect(DriverContext) (RepositoryStatus, error)
+	Snapshot(DriverContext, string) (map[string]FileSnapshot, error)
+	ReadFile(DriverContext, string, string) ([]byte, bool, error)
+	RestoreWorkspace(DriverContext) error
 	Pull(DriverContext) (PullResult, error)
 	Push(DriverContext, string) (PushResult, error)
 	Doctor(Repository) (DiagnosticResult, error)

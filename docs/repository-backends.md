@@ -119,6 +119,9 @@ Repository state 至少记录：
 type RepositoryDriver interface {
     Prepare(Repository) error
     Inspect(DriverContext) (RepositoryStatus, error)
+    Snapshot(DriverContext, revision string) (map[string]FileSnapshot, error)
+    ReadFile(DriverContext, revision string, path string) ([]byte, bool, error)
+    RestoreWorkspace(DriverContext) error
     Pull(DriverContext) (PullResult, error)
     Push(DriverContext, string) (PushResult, error)
     Doctor(Repository) (DiagnosticResult, error)
@@ -129,6 +132,8 @@ type RepositoryDriver interface {
 
 - `prepare` 创建或验证 managed workspace。
 - `inspect` 返回统一状态和当前 remote revision。
+- `snapshot` 和 `readFile` 按指定 revision 提供 backend-neutral 的文件视图，用于 file-level status 与 diff；不得修改业务项目或 workspace working tree。
+- `restoreWorkspace` 仅在用户显式解决 `copy` 单文件 conflict 后，将指定 workspace scope 恢复到 Driver 的 local revision；业务项目副本仍保留用户选择，Git Driver 不得使用 `reset --hard`。
 - `pull` 只做安全更新；不能覆盖未同步的本地修改。
 - `push` 必须接受 expected revision；远端已变化时返回 conflict。
 - `doctor` 检查工具、网络、凭证、路径和后端能力。
