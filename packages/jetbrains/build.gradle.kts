@@ -76,6 +76,8 @@ intellijPlatform {
               <li>Add mappings directly from the table toolbar.</li>
               <li>Show local and Repository content in the IntelliJ diff viewer.</li>
               <li>Resolve copy-mode file conflicts with an explicit local or Repository choice.</li>
+              <li>Use a compact icon toolbar and show full mapped paths on hover.</li>
+              <li>Preview upload and download directions before synchronization.</li>
               <li>Format last sync timestamps in the user's local date and time format.</li>
             </ul>
         """.trimIndent()

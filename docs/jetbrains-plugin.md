@@ -75,6 +75,8 @@ val status = Json.decodeFromString<StatusResponse>(output.stdout)
 - Project Context Action：右键项目目录，`Setup Local Config Sync`。
 - Tool Window：作为插件主界面，以 file table 展示 local path、Repository path 和 file-level status；Project / Repository 元数据使用紧凑详情入口，并提供新增 Mapping、Refresh / Sync / Git Auth、diff 和显式冲突解决。
 
+Tool Window 的高频操作和 Project / Repository 详情入口使用紧凑 icon button，并通过 tooltip 和 accessible name 说明用途。file table 默认只展示文件名，hover 时展示完整的 project-relative / Repository-relative path，避免长目录挤占状态列。
+
 ## Setup Wizard
 
 当前 GitHub file mapping 流程：
@@ -101,6 +103,10 @@ local-config status --json --project <project>
 ```
 
 获取状态。
+
+状态列必须明确表达同步方向：`local_changes` 展示为 `Upload → Repository`，`remote_changes` 展示为 `Download → Local`。用户触发 Sync 时，插件先按当前 status 展示本次 upload / download 摘要；CLI 在真正写入前仍会重新检查 revision，UI 预览不能替代 core 的并发保护。
+
+存在 `conflict` 时，Sync 入口不得继续执行普通 sync。插件定位冲突文件并打开 IntelliJ diff viewer，展示 Local 与 Repository 的逐行差异；对于 `kind=file`、`mode=copy` 的 Mapping，只有 review diff 后才启用 `Use Local → Repository` 和 `Use Repository → Local`，最终仍调用 CLI `resolve` 完成带 expected revision 的显式解决。
 
 示例响应模型：
 

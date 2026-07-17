@@ -28,6 +28,8 @@
           <li>Replace the status bar widget and verbose cards with a file status table.</li>
           <li>Add mappings directly from the table toolbar.</li>
           <li>Review and explicitly resolve copy-mode file conflicts.</li>
+          <li>Use a compact icon toolbar and show full mapped paths on hover.</li>
+          <li>Preview upload and download directions before synchronization.</li>
           <li>Format last sync timestamps for the current locale.</li>
         </ul>
     ]]></change-notes>

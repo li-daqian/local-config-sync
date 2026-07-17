@@ -11,6 +11,7 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
@@ -20,8 +21,8 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import io.github.localconfigsync.jetbrains.actions.reportFailure
 import io.github.localconfigsync.jetbrains.actions.confirmSensitiveFiles
+import io.github.localconfigsync.jetbrains.actions.reportFailure
 import io.github.localconfigsync.jetbrains.actions.runBackground
 import io.github.localconfigsync.jetbrains.actions.startGitAuth
 import io.github.localconfigsync.jetbrains.actions.startSetup
@@ -55,6 +56,7 @@ import java.util.Locale
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -76,8 +78,12 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
     private val service = LocalConfigStatusService.getInstance(project)
     private val body = JPanel(BorderLayout())
     private val status = JBLabel("Checking").apply { font = font.deriveFont(Font.BOLD) }
-    private val syncButton = JButton("Sync Now").apply { addActionListener { startSync(project) } }
-    private val authButton = JButton("Git Auth").apply { addActionListener { startGitAuth(project) } }
+    private val syncButton = iconButton(SYNC_ICON, "Sync local and Repository files").apply {
+        addActionListener { requestSync() }
+    }
+    private val authButton = iconButton(KEY_ICON, "Authenticate Git repository").apply {
+        addActionListener { startGitAuth(project) }
+    }
     private var response: StatusResponse? = null
     private val reviewedConflicts = mutableMapOf<String, String>()
     private var tableModel = FileStatusTableModel(emptyList())
@@ -92,7 +98,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         selectionModel.addListSelectionListener { updateConflictActions() }
         addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(event: MouseEvent) {
-                if (event.clickCount == 2) selectedFile()?.takeIf { it.status == "conflict" }?.let(::showDiff)
+                if (event.clickCount == 2) selectedFile()?.takeIf { it.status != "synced" }?.let(::showDiff)
             }
         })
     }
@@ -121,10 +127,10 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
             add(status, BorderLayout.EAST)
         }, BorderLayout.NORTH)
         add(JPanel(FlowLayout(FlowLayout.LEFT, 6, 8)).apply {
-            add(JButton("Refresh").apply { addActionListener { service.refresh() } })
+            add(iconButton(REFRESH_ICON, "Refresh status").apply { addActionListener { service.refresh() } })
             add(syncButton)
             add(authButton)
-            add(JButton("Settings").apply {
+            add(iconButton(SETTINGS_ICON, "Open Local Config Sync settings").apply {
                 addActionListener { ShowSettingsUtil.getInstance().showSettingsDialog(project, LocalConfigConfigurable::class.java) }
             })
         }, BorderLayout.SOUTH)
@@ -176,16 +182,26 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         status.text = syncStateName(value.state)
         status.foreground = statusColor(value.state)
         syncButton.isEnabled = value.mappings.isNotEmpty()
+        syncButton.toolTipText = syncTooltip(value.files)
+        syncButton.accessibleContext.accessibleDescription = syncButton.toolTipText
         authButton.isEnabled = value.repositories.any { it.type == "git" }
 
         val summary = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.emptyBottom(10)
             add(JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
                 isOpaque = false
-                add(JButton("Project").apply { addActionListener { showProjectDetails(this, value) } })
+                add(iconButton(PROJECT_ICON, "Show project details").apply {
+                    addActionListener { showProjectDetails(this, value) }
+                })
                 if (value.repositories.isNotEmpty()) {
-                    val label = if (value.repositories.size == 1) "Repository" else "Repositories (${value.repositories.size})"
-                    add(JButton(label).apply { addActionListener { showRepositoryDetails(this, value.repositories) } })
+                    val tooltip = if (value.repositories.size == 1) {
+                        "Show repository details"
+                    } else {
+                        "Show ${value.repositories.size} repositories"
+                    }
+                    add(iconButton(REPOSITORY_ICON, tooltip).apply {
+                        addActionListener { showRepositoryDetails(this, value.repositories) }
+                    })
                 }
             }, BorderLayout.WEST)
             add(JBLabel(formatLastSync(value.lastSyncTime)).apply {
@@ -199,7 +215,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         table.model = tableModel
         table.columnModel.getColumn(0).preferredWidth = JBUI.scale(230)
         table.columnModel.getColumn(1).preferredWidth = JBUI.scale(230)
-        table.columnModel.getColumn(2).preferredWidth = JBUI.scale(130)
+        table.columnModel.getColumn(2).preferredWidth = JBUI.scale(170)
         table.emptyText.text = if (value.mappings.isEmpty()) {
             "No mapped files. Add a mapping to start syncing."
         } else {
@@ -228,6 +244,47 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         return if (selected >= 0) tableModel.rowAt(table.convertRowIndexToModel(selected)) else null
     }
 
+    private fun requestSync() {
+        val value = response ?: return
+        val conflicts = value.files.filter { it.status == "conflict" }
+        if (conflicts.isNotEmpty()) {
+            val firstConflict = conflicts.first()
+            focusFile(firstConflict)
+            Messages.showWarningDialog(
+                project,
+                "${conflicts.size} conflict${if (conflicts.size == 1) "" else "s"} must be resolved before syncing.\n\n" +
+                    "The first conflict will open in the diff viewer. Review both versions, then choose whether " +
+                    "the Local version should be uploaded or the Repository version should be downloaded.",
+                "Resolve Conflicts Before Sync",
+            )
+            showDiff(firstConflict)
+            return
+        }
+
+        val changed = value.files.filter { it.status == "local_changes" || it.status == "remote_changes" }
+        if (changed.isEmpty()) {
+            Messages.showInfoMessage(project, "Local and Repository files already match.", "Local Config Sync")
+            return
+        }
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            syncConfirmation(changed),
+            "Review Sync Direction",
+            "Sync",
+            "Cancel",
+            Messages.getQuestionIcon(),
+        ) == Messages.YES
+        if (confirmed) startSync(project)
+    }
+
+    private fun focusFile(file: FileStatusSummary) {
+        val modelRow = tableModel.indexOf(file)
+        if (modelRow < 0) return
+        val viewRow = table.convertRowIndexToView(modelRow)
+        table.selectionModel.setSelectionInterval(viewRow, viewRow)
+        table.scrollRectToVisible(table.getCellRect(viewRow, 0, true))
+    }
+
     private fun updateConflictActions() {
         conflictActions.removeAll()
         val file = selectedFile()
@@ -240,11 +297,11 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
             val mapping = response?.mappings?.firstOrNull { it.id == file.mappingId }
             if (mapping?.kind == "file" && mapping.mode == "copy") {
                 val reviewed = reviewedConflicts[conflictKey(file)] != null
-                conflictActions.add(JButton("Use Local").apply {
+                conflictActions.add(JButton("Use Local → Repository").apply {
                     isEnabled = reviewed
                     addActionListener { resolve(file, "local") }
                 })
-                conflictActions.add(JButton("Use Repository").apply {
+                conflictActions.add(JButton("Use Repository → Local").apply {
                     isEnabled = reviewed
                     addActionListener { resolve(file, "remote") }
                 })
@@ -289,7 +346,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         DiffManager.getInstance().showDiff(
             project,
             SimpleDiffRequest(
-                "Local Config Conflict · ${diff.localPath}",
+                "Local Config Diff · ${displayFileName(diff.localPath)}",
                 local,
                 remote,
                 "Local · ${diff.localPath}${if (diff.localExists) "" else " (deleted)"}",
@@ -309,7 +366,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
             project,
             message,
             "Resolve Local Config Conflict",
-            if (useLocal) "Use Local" else "Use Repository",
+            if (useLocal) "Upload Local" else "Download Repository",
             "Cancel",
             Messages.getWarningIcon(),
         ) == Messages.YES
@@ -429,13 +486,16 @@ private class FileStatusTableModel(private val rows: List<FileStatusSummary>) : 
     override fun getColumnCount(): Int = columns.size
     override fun getColumnName(column: Int): String = columns[column]
     override fun getValueAt(row: Int, column: Int): Any = when (column) {
-        0 -> rows[row].localPath
-        1 -> rows[row].remotePath
+        0 -> FilePathCell(displayFileName(rows[row].localPath), rows[row].localPath)
+        1 -> FilePathCell(displayFileName(rows[row].remotePath), rows[row].remotePath)
         else -> rows[row].status
     }
 
     fun rowAt(row: Int): FileStatusSummary = rows[row]
+    fun indexOf(file: FileStatusSummary): Int = rows.indexOf(file)
 }
+
+private data class FilePathCell(val fileName: String, val fullPath: String)
 
 private class FileStatusCellRenderer : DefaultTableCellRenderer() {
     override fun getTableCellRendererComponent(
@@ -454,21 +514,23 @@ private class FileStatusCellRenderer : DefaultTableCellRenderer() {
             text = fileStatusName(state)
             if (!isSelected) foreground = statusColor(state)
             toolTipText = when (state) {
-                "local_changes" -> "The local file needs to be pushed"
-                "remote_changes" -> "The local file needs to be updated"
+                "local_changes" -> "The Local version will be uploaded to the Repository; double-click to review the diff"
+                "remote_changes" -> "The Repository version will be downloaded to Local; double-click to review the diff"
                 "conflict" -> "Both sides changed; review the diff before choosing a version"
                 else -> "Local and repository files match"
             }
         } else {
-            toolTipText = value?.toString()
+            val path = value as? FilePathCell
+            text = path?.fileName ?: value?.toString().orEmpty()
+            toolTipText = path?.fullPath ?: value?.toString()
         }
         return this
     }
 }
 
 private fun fileStatusName(state: String): String = when (state) {
-    "local_changes" -> "Push required"
-    "remote_changes" -> "Update available"
+    "local_changes" -> "Upload → Repository"
+    "remote_changes" -> "Download → Local"
     "conflict" -> "Conflict"
     else -> "Synced"
 }
@@ -485,3 +547,52 @@ private fun statusColor(state: String): JBColor = when (state) {
     "local_changes", "remote_changes", "pending" -> JBColor.namedColor("Label.warningForeground", JBColor(0x9A6700, 0xCCA700))
     else -> JBColor.namedColor("Label.foreground", JBColor.BLACK)
 }
+
+internal fun displayFileName(path: String): String = path
+    .trimEnd('/', '\\')
+    .substringAfterLast('/')
+    .substringAfterLast('\\')
+    .ifBlank { path }
+
+internal fun syncConfirmation(files: List<FileStatusSummary>): String {
+    val uploads = files.filter { it.status == "local_changes" }
+    val downloads = files.filter { it.status == "remote_changes" }
+    return buildString {
+        append("This sync will perform the following actions:\n")
+        appendSyncFiles("Upload Local → Repository", uploads)
+        appendSyncFiles("Download Repository → Local", downloads)
+        append("\nThe CLI will recheck the Repository revision before writing.")
+    }
+}
+
+private fun StringBuilder.appendSyncFiles(title: String, files: List<FileStatusSummary>) {
+    if (files.isEmpty()) return
+    append("\n$title (${files.size}):\n")
+    files.take(8).forEach { append("  • ${displayFileName(it.localPath)}\n") }
+    if (files.size > 8) append("  • …and ${files.size - 8} more\n")
+}
+
+private fun syncTooltip(files: List<FileStatusSummary>): String {
+    val uploads = files.count { it.status == "local_changes" }
+    val downloads = files.count { it.status == "remote_changes" }
+    val conflicts = files.count { it.status == "conflict" }
+    return when {
+        conflicts > 0 -> "Resolve $conflicts conflict${if (conflicts == 1) "" else "s"} before syncing"
+        uploads + downloads > 0 -> "Sync $uploads upload${if (uploads == 1) "" else "s"} and $downloads download${if (downloads == 1) "" else "s"}"
+        else -> "Local and Repository files are synchronized"
+    }
+}
+
+private fun iconButton(icon: Icon, tooltip: String): JButton = JButton(icon).apply {
+    toolTipText = tooltip
+    isFocusable = false
+    accessibleContext.accessibleName = tooltip
+    accessibleContext.accessibleDescription = tooltip
+}
+
+private val REFRESH_ICON = IconLoader.getIcon("/icons/refresh.svg", LocalConfigToolWindowFactory::class.java)
+private val SYNC_ICON = IconLoader.getIcon("/icons/sync.svg", LocalConfigToolWindowFactory::class.java)
+private val KEY_ICON = IconLoader.getIcon("/icons/key.svg", LocalConfigToolWindowFactory::class.java)
+private val SETTINGS_ICON = IconLoader.getIcon("/icons/settings.svg", LocalConfigToolWindowFactory::class.java)
+private val PROJECT_ICON = IconLoader.getIcon("/icons/project.svg", LocalConfigToolWindowFactory::class.java)
+private val REPOSITORY_ICON = IconLoader.getIcon("/icons/repository.svg", LocalConfigToolWindowFactory::class.java)
