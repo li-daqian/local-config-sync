@@ -6,6 +6,8 @@ import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessListener
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import java.nio.charset.StandardCharsets
@@ -28,6 +30,7 @@ object LocalConfigCli {
             .withParameters(args + "--json")
             .withCharset(StandardCharsets.UTF_8)
         if (projectPath != null) commandLine.withWorkDirectory(projectPath)
+        if (project != null && !project.isDisposed) saveAllDocuments()
 
         val output = try {
             CapturingProcessHandler(commandLine).runProcess(120_000)
@@ -59,6 +62,17 @@ object LocalConfigCli {
         FileDiffResponse::class.java,
     )
     fun command(project: Project?, args: List<String>): CommandResponse = execute(project, args, CommandResponse::class.java)
+
+    private fun saveAllDocuments() {
+        // The CLI reads files from disk, while editor changes may still exist only in IntelliJ Documents.
+        val application = ApplicationManager.getApplication()
+        val save = Runnable { FileDocumentManager.getInstance().saveAllDocuments() }
+        if (application.isDispatchThread) {
+            save.run()
+        } else {
+            application.invokeAndWait(save)
+        }
+    }
 
     fun startGithubAuthentication(
         project: Project,

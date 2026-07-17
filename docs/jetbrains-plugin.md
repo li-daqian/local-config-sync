@@ -104,6 +104,8 @@ local-config status --json --project <project>
 
 获取状态。
 
+调用 CLI 前，插件必须先在 EDT 保存 IntelliJ 中尚未落盘的 Document，确保 status、diff、preview 和 sync 读取到用户当前看到的文件内容。
+
 状态列必须明确表达同步方向：`local_changes` 展示为 `Upload → Repository`，`remote_changes` 展示为 `Download → Local`。用户触发 Sync 时，插件先按当前 status 展示本次 upload / download 摘要；CLI 在真正写入前仍会重新检查 revision，UI 预览不能替代 core 的并发保护。
 
 存在 `conflict` 时，Sync 入口不得继续执行普通 sync。插件定位冲突文件并打开 IntelliJ diff viewer，展示 Local 与 Repository 的逐行差异；对于 `kind=file`、`mode=copy` 的 Mapping，只有 review diff 后才启用 `Use Local → Repository` 和 `Use Repository → Local`，最终仍调用 CLI `resolve` 完成带 expected revision 的显式解决。
