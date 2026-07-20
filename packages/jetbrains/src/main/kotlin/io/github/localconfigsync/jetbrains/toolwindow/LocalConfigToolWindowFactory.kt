@@ -10,7 +10,6 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
@@ -78,7 +77,12 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
     private val service = LocalConfigStatusService.getInstance(project)
     private val body = JPanel(BorderLayout())
     private val status = JBLabel("Checking").apply { font = font.deriveFont(Font.BOLD) }
-    private val syncButton = iconButton(SYNC_ICON, "Sync local and Repository files").apply {
+    private val syncButton = JButton("Sync Now", SYNC_ICON).apply {
+        toolTipText = "Sync local and Repository files"
+        isFocusable = false
+        iconTextGap = JBUI.scale(8)
+        accessibleContext.accessibleName = text
+        accessibleContext.accessibleDescription = toolTipText
         addActionListener { requestSync() }
     }
     private val authButton = iconButton(KEY_ICON, "Authenticate Git repository").apply {
@@ -126,13 +130,16 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
             add(JBLabel("Local Config Sync").apply { font = font.deriveFont(Font.BOLD, font.size2D + 2f) }, BorderLayout.WEST)
             add(status, BorderLayout.EAST)
         }, BorderLayout.NORTH)
-        add(JPanel(FlowLayout(FlowLayout.LEFT, 6, 8)).apply {
-            add(iconButton(REFRESH_ICON, "Refresh status").apply { addActionListener { service.refresh() } })
-            add(syncButton)
-            add(authButton)
-            add(iconButton(SETTINGS_ICON, "Open Local Config Sync settings").apply {
-                addActionListener { ShowSettingsUtil.getInstance().showSettingsDialog(project, LocalConfigConfigurable::class.java) }
-            })
+        add(JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.emptyTop(8)
+            add(syncButton, BorderLayout.WEST)
+            add(JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+                add(iconButton(REFRESH_ICON, "Refresh status").apply { addActionListener { service.refresh() } })
+                add(authButton)
+                add(iconButton(SETTINGS_ICON, "Open Local Config Sync settings").apply {
+                    addActionListener { ShowSettingsUtil.getInstance().showSettingsDialog(project, LocalConfigConfigurable::class.java) }
+                })
+            }, BorderLayout.EAST)
         }, BorderLayout.SOUTH)
     }
 
@@ -151,6 +158,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         response = null
         status.text = "Checking"
         status.foreground = UIUtil.getLabelForeground()
+        updatePrimaryAction("Sync Now", "Sync local and Repository files")
         syncButton.isEnabled = false
         authButton.isEnabled = false
         body.add(JBLabel(text).apply {
@@ -163,6 +171,7 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         response = null
         status.text = "Failed"
         status.foreground = errorColor()
+        updatePrimaryAction("Sync Now", "Sync local and Repository files")
         syncButton.isEnabled = false
         authButton.isEnabled = false
         body.add(detailsCard(
@@ -181,33 +190,33 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         reviewedConflicts.clear()
         status.text = syncStateName(value.state)
         status.foreground = statusColor(value.state)
+        val conflictCount = value.files.count { it.status == "conflict" }
+        val primaryActionText = when (conflictCount) {
+            0 -> "Sync Now"
+            1 -> "Review Conflict"
+            else -> "Review Conflicts"
+        }
+        updatePrimaryAction(primaryActionText, syncTooltip(value.files))
         syncButton.isEnabled = value.mappings.isNotEmpty()
-        syncButton.toolTipText = syncTooltip(value.files)
-        syncButton.accessibleContext.accessibleDescription = syncButton.toolTipText
         authButton.isEnabled = value.repositories.any { it.type == "git" }
 
-        val summary = JPanel(BorderLayout()).apply {
+        val summary = JPanel(GridBagLayout()).apply {
             border = JBUI.Borders.emptyBottom(10)
-            add(JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
-                isOpaque = false
-                add(iconButton(PROJECT_ICON, "Show project details").apply {
-                    addActionListener { showProjectDetails(this, value) }
-                })
-                if (value.repositories.isNotEmpty()) {
-                    val tooltip = if (value.repositories.size == 1) {
-                        "Show repository details"
-                    } else {
-                        "Show ${value.repositories.size} repositories"
-                    }
-                    add(iconButton(REPOSITORY_ICON, tooltip).apply {
-                        addActionListener { showRepositoryDetails(this, value.repositories) }
-                    })
-                }
-            }, BorderLayout.WEST)
-            add(JBLabel(formatLastSync(value.lastSyncTime)).apply {
-                foreground = UIUtil.getContextHelpForeground()
-                toolTipText = value.lastSyncTime
-            }, BorderLayout.EAST)
+            addSummaryRow(0, PROJECT_ICON, "Project", project.name, value.projectPath)
+            addSummaryRow(
+                1,
+                REPOSITORY_ICON,
+                "Repository",
+                repositorySummaryText(value.repositories),
+                repositorySummaryTooltip(value.repositories),
+            )
+            addSummaryRow(
+                2,
+                null,
+                "Last sync",
+                formatLastSync(value.lastSyncTime).removePrefix("Last sync: "),
+                value.lastSyncTime ?: "Never",
+            )
         }
         body.add(summary, BorderLayout.NORTH)
 
@@ -389,41 +398,40 @@ private class LocalConfigToolWindowPanel(private val project: Project) : Disposa
         }
     }
 
-    private fun showProjectDetails(anchor: Component, value: StatusResponse) = showDetails(
-        anchor,
-        "Project",
-        listOf(
-            "Path" to value.projectPath,
-            "Status" to syncStateName(value.state),
-            "Last sync" to formatLastSync(value.lastSyncTime).removePrefix("Last sync: "),
-            "Mappings" to value.mappings.size.toString(),
-        ),
-    )
-
-    private fun showRepositoryDetails(anchor: Component, repositories: List<RepositorySummary>) {
-        val values = repositories.flatMapIndexed { index, repository ->
-            buildList {
-                if (repositories.size > 1) add("Repository ${index + 1}" to repository.name.ifBlank { repository.id })
-                add("Name" to repository.name.ifBlank { repository.id })
-                add("ID" to repository.id)
-                add("Type" to repository.type)
-                add("Status" to syncStateName(repository.state))
-                add("Workspace" to repository.workspacePath)
-                add("Revision" to (repository.remoteRevision ?: "Not available"))
-            }
-        }
-        showDetails(anchor, if (repositories.size == 1) "Repository" else "Repositories", values)
+    private fun JPanel.addSummaryRow(row: Int, icon: Icon?, label: String, value: String, tooltip: String) {
+        add(JBLabel(icon), GridBagConstraints().apply {
+            gridx = 0
+            gridy = row
+            anchor = GridBagConstraints.WEST
+            insets = Insets(2, 0, 4, JBUI.scale(7))
+        })
+        add(JBLabel(label).apply {
+            foreground = UIUtil.getContextHelpForeground()
+        }, GridBagConstraints().apply {
+            gridx = 1
+            gridy = row
+            anchor = GridBagConstraints.WEST
+            insets = Insets(2, 0, 4, JBUI.scale(14))
+        })
+        add(JBLabel(value).apply {
+            toolTipText = tooltip
+            accessibleContext.accessibleName = "$label: $value"
+            accessibleContext.accessibleDescription = tooltip
+        }, GridBagConstraints().apply {
+            gridx = 2
+            gridy = row
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.WEST
+            insets = Insets(2, 0, 4, 0)
+        })
     }
 
-    private fun showDetails(anchor: Component, title: String, values: List<Pair<String, String>>) {
-        JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(detailsCard(null, values), null)
-            .setTitle(title)
-            .setResizable(true)
-            .setMovable(true)
-            .setRequestFocus(false)
-            .createPopup()
-            .showUnderneathOf(anchor)
+    private fun updatePrimaryAction(text: String, tooltip: String) {
+        syncButton.text = text
+        syncButton.toolTipText = tooltip
+        syncButton.accessibleContext.accessibleName = text
+        syncButton.accessibleContext.accessibleDescription = tooltip
     }
 
     private fun detailsCard(title: String?, values: List<Pair<String, String>>, error: Boolean = false): JComponent =
@@ -558,6 +566,26 @@ internal fun displayFileName(path: String): String = path
     .substringAfterLast('/')
     .substringAfterLast('\\')
     .ifBlank { path }
+
+internal fun repositorySummaryText(repositories: List<RepositorySummary>): String = when (repositories.size) {
+    0 -> "Not configured"
+    1 -> repositories.single().name.ifBlank { repositories.single().id }
+    else -> "${repositories.size} repositories"
+}
+
+private fun repositorySummaryTooltip(repositories: List<RepositorySummary>): String = when (repositories.size) {
+    0 -> "No Repository is configured for this project"
+    1 -> repositories.single().let { repository ->
+        buildString {
+            append(repository.name.ifBlank { repository.id })
+            append(" · ").append(repository.type)
+            repository.workspacePath.takeIf(String::isNotBlank)?.let { append(" · ").append(it) }
+        }
+    }
+    else -> repositories.joinToString(" · ") { repository ->
+        repository.name.ifBlank { repository.id }
+    }
+}
 
 internal fun syncConfirmation(files: List<FileStatusSummary>): String {
     val uploads = files.filter { it.status == "local_changes" }

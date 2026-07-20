@@ -1,6 +1,7 @@
 package io.github.localconfigsync.jetbrains.toolwindow
 
 import io.github.localconfigsync.jetbrains.cli.FileStatusSummary
+import io.github.localconfigsync.jetbrains.cli.RepositorySummary
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -39,9 +40,22 @@ class LocalConfigToolWindowPresentationTest {
         assertEquals(status, fileStatusForCell(status))
     }
 
+    @Test
+    fun repositorySummaryUsesReadableStaticText() {
+        assertEquals("Not configured", repositorySummaryText(emptyList()))
+        assertEquals("Personal Config", repositorySummaryText(listOf(repository("personal", "Personal Config"))))
+        assertEquals("fallback-id", repositorySummaryText(listOf(repository("fallback-id", ""))))
+        assertEquals(
+            "2 repositories",
+            repositorySummaryText(listOf(repository("personal", "Personal"), repository("work", "Work"))),
+        )
+    }
+
     private fun file(localPath: String, status: String) = FileStatusSummary(
         localPath = localPath,
         remotePath = "repository/$localPath",
         status = status,
     )
+
+    private fun repository(id: String, name: String) = RepositorySummary(id = id, name = name)
 }

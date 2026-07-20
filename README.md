@@ -82,7 +82,7 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.5.zip` 后即可使用。插件内置 Linux、macOS、Windows 的 amd64/arm64 六个 native CLI binary，不要求用户安装 Node.js；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
-插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。Project 与 Repository 元数据通过紧凑详情入口展示，不再注册底部状态栏组件。
+插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。`Sync Now` 作为顶部主操作展示，Project、Repository 与最近同步时间使用只读摘要，不再注册底部状态栏组件。
 
 本地构建默认禁止自动下载 IntelliJ SDK，避免意外下载数 GB 文件。必须通过
 `-PlocalIdeaPath` 使用已有 IDE；确实需要下载时，显式传入
