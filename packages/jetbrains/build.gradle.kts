@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.github.localconfigsync"
-version = "0.1.5"
+version = providers.gradleProperty("pluginVersion").orElse("0.1.5").get()
 
 val localIdeaPath = providers.gradleProperty("localIdeaPath").orNull
 val localVerifierIdePath = providers.gradleProperty("localVerifierIdePath").orNull
@@ -45,6 +45,14 @@ kotlin {
 }
 
 intellijPlatform {
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+    }
     pluginConfiguration {
         id = "io.github.localconfigsync.jetbrains"
         name = "Local Config Sync"

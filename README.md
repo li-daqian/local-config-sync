@@ -82,6 +82,35 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.5.zip` 后即可使用。插件内置 Linux、macOS、Windows 的 amd64/arm64 六个 native CLI binary，不要求用户安装 Node.js；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
 
+## 发布 JetBrains 插件
+
+仓库使用统一的 `v<semver>` release tag。每个平台的 workflow 先比较上一个 release tag 与当前 tag 之间的变更范围，只构建和发布发生变化的平台；`cmd/`、`internal/`、`go.mod` 或 `go.sum` 中的 core/CLI 变更会触发所有依赖该 core 的平台。JetBrains 或 core 有变化时，GitHub Actions 才执行六平台 CLI 构建、完整插件验证、签名并发布到 JetBrains Marketplace 的 default channel。tag 同时决定本次实际发布产物的版本，例如：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+如果该版本只修改其他平台的 UI，JetBrains jobs 会直接跳过；如果同一版本修改了多个平台，各平台使用同一个 tag 分别发布，不需要创建多个 tag。首次使用统一 release tag、找不到上一个 `vX.Y.Z` tag 时，所有平台都应视为有变化并执行一次发布。
+
+发布前需要在仓库的 `Settings | Secrets and variables | Actions` 中配置四个 Repository secrets：
+
+- `PUBLISH_TOKEN`：JetBrains Marketplace Profile 的 `My Tokens` 页面生成的 Personal Access Token。
+- `CERTIFICATE_CHAIN`：插件签名证书链文件（`chain.crt`）的完整内容。
+- `PRIVATE_KEY`：与证书对应的 private key 文件（`private.pem`）的完整内容。
+- `PRIVATE_KEY_PASSWORD`：private key 的密码。
+
+多行 PEM 内容可以直接保存为 GitHub Actions secret。不要把 token、private key、密码或证书文件提交到仓库。首次发布必须先在 JetBrains Marketplace 手动创建插件并上传一个已签名版本；Marketplace 接受该插件 ID 后，后续新版本才可由 `publishPlugin` 自动发布。首次 tag run 即使因插件尚未创建而发布失败，只要签名已完成，workflow artifact 中仍会保留 `*-signed.zip`，可用于首次手动上传。插件 ID 固定为 `io.github.localconfigsync.jetbrains`，Marketplace 不接受重复版本，因此每次发布必须使用新的 tag 版本。
+
+也可以使用已登录的 GitHub CLI 配置 Secrets；token 和密码命令会交互读取值，避免进入 shell history：
+
+```bash
+gh secret set PUBLISH_TOKEN
+gh secret set CERTIFICATE_CHAIN < chain.crt
+gh secret set PRIVATE_KEY < private.pem
+gh secret set PRIVATE_KEY_PASSWORD
+```
+
 插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。`Sync Now` 作为顶部主操作展示，Project、Repository 与最近同步时间使用只读摘要，不再注册底部状态栏组件。
 
 本地构建默认禁止自动下载 IntelliJ SDK，避免意外下载数 GB 文件。必须通过

@@ -3,6 +3,8 @@ name: JetBrains Plugin
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
       - "packages/jetbrains/**"
@@ -27,14 +29,69 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions:
   contents: read
 
 jobs:
+  release_context:
+    name: Resolve release scope
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.context.outputs.is_release }}
+      version: ${{ steps.context.outputs.version }}
+      jetbrains_changed: ${{ steps.context.outputs.jetbrains_changed }}
+    steps:
+      - name: Check out release history
+        if: ${{ github.ref_type == 'tag' }}
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and JetBrains release scope
+        id: context
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "jetbrains_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must use v<semver>, for example v0.2.0." >&2
+            exit 1
+          fi
+
+          previous_tag=""
+          while IFS= read -r candidate; do
+            if [[ "$candidate" != "$GITHUB_REF_NAME" && "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              previous_tag="$candidate"
+              break
+            fi
+          done < <(git tag --merged "$GITHUB_SHA" --sort=-version:refname)
+
+          jetbrains_changed=false
+          if [[ -z "$previous_tag" ]]; then
+            jetbrains_changed=true
+          elif ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- \
+            packages/jetbrains cmd internal go.mod go.sum; then
+            jetbrains_changed=true
+          fi
+
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "jetbrains_changed=$jetbrains_changed" >> "$GITHUB_OUTPUT"
+          echo "Previous release: ${previous_tag:-none}" >> "$GITHUB_STEP_SUMMARY"
+          echo "JetBrains/core changed: $jetbrains_changed" >> "$GITHUB_STEP_SUMMARY"
+
   native-cli:
     name: Native CLI (${{ matrix.target }})
+    needs: release_context
+    if: ${{ needs.release_context.outputs.jetbrains_changed == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +134,8 @@ jobs:
 
   verify:
     name: Build and verify
+    needs: release_context
+    if: ${{ needs.release_context.outputs.jetbrains_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -135,4 +194,58 @@ jobs:
         with:
           name: local-config-sync-jetbrains
           path: packages/jetbrains/build/distributions/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish to JetBrains Marketplace
+    if: >-
+      ${{ needs.release_context.outputs.is_release == 'true' &&
+          needs.release_context.outputs.jetbrains_changed == 'true' }}
+    needs: [release_context, native-cli, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+
+      - name: Sign and publish plugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          for secret_name in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD PUBLISH_TOKEN; do
+            if [[ -z "${!secret_name}" ]]; then
+              echo "Required GitHub Actions secret is missing: $secret_name" >&2
+              exit 1
+            fi
+          done
+          packages/jetbrains/gradlew -p packages/jetbrains \
+            -PallowIdeSdkDownload=true \
+            -PpluginVersion=${{ needs.release_context.outputs.version }} \
+            publishPlugin
+
+      - name: Upload signed plugin distribution
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: local-config-sync-jetbrains-${{ needs.release_context.outputs.version }}-signed
+          path: packages/jetbrains/build/distributions/*-signed.zip
           if-no-files-found: error
