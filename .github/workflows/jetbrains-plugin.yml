@@ -246,17 +246,41 @@ jobs:
 
       - name: Sign and publish plugin
         env:
-          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_PUBLISH_TOKEN }}
         run: |
-          for secret_name in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD PUBLISH_TOKEN; do
-            if [[ -z "${!secret_name}" ]]; then
-              echo "Required GitHub Actions secret is missing: $secret_name" >&2
-              exit 1
-            fi
-          done
+          if [[ -z "$PUBLISH_TOKEN" ]]; then
+            echo "Required GitHub Actions secret is missing: JETBRAINS_PUBLISH_TOKEN" >&2
+            exit 1
+          fi
+
+          signing_dir="$RUNNER_TEMP/jetbrains-plugin-signing"
+          mkdir -p "$signing_dir"
+
+          PRIVATE_KEY_PASSWORD="$(openssl rand -hex 32)"
+          export PRIVATE_KEY_PASSWORD
+          echo "::add-mask::$PRIVATE_KEY_PASSWORD"
+
+          openssl genpkey \
+            -algorithm RSA \
+            -aes-256-cbc \
+            -pass env:PRIVATE_KEY_PASSWORD \
+            -out "$signing_dir/private.pem" \
+            -pkeyopt rsa_keygen_bits:4096
+
+          openssl req \
+            -new \
+            -x509 \
+            -sha256 \
+            -days 365 \
+            -subj "/CN=Local Config Sync CI" \
+            -key "$signing_dir/private.pem" \
+            -passin env:PRIVATE_KEY_PASSWORD \
+            -out "$signing_dir/chain.crt"
+
+          PRIVATE_KEY="$(<"$signing_dir/private.pem")"
+          CERTIFICATE_CHAIN="$(<"$signing_dir/chain.crt")"
+          export PRIVATE_KEY CERTIFICATE_CHAIN
+
           packages/jetbrains/gradlew -p packages/jetbrains \
             -PallowIdeSdkDownload=true \
             -PpluginVersion=${{ needs.release_context.outputs.version }} \

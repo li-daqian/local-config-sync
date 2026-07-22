@@ -127,22 +127,18 @@ git push origin release-2026.07.22.1
 
 GitHub Actions 从 tag 对应 commit 读取 manifest。包含 `jetbrains` 时才执行六平台 CLI 构建、完整 Plugin Verifier、签名，并将 manifest 中的 version/channel 传给 `publishPlugin`。同一个 tag 未来可以列出多个独立版本的平台，由各 publisher 并行处理；发布失败时重新运行 failed jobs，不移动 tag、不修改该 tag 下的 manifest。
 
-发布前需要在仓库的 `Settings | Secrets and variables | Actions` 中配置四个 Repository secrets：
+发布前只需要在仓库的 `Settings | Secrets and variables | Actions` 中配置一个 Repository secret：
 
-- `PUBLISH_TOKEN`：JetBrains Marketplace Profile 的 `My Tokens` 页面生成的 Personal Access Token。
-- `CERTIFICATE_CHAIN`：插件签名证书链文件（`chain.crt`）的完整内容。
-- `PRIVATE_KEY`：与证书对应的 private key 文件（`private.pem`）的完整内容。
-- `PRIVATE_KEY_PASSWORD`：private key 的密码。
+- `JETBRAINS_PUBLISH_TOKEN`：JetBrains Marketplace Profile 的 `My Tokens` 页面生成的 Personal Access Token。workflow 仅在 JetBrains publish job 内将其映射为 Gradle 使用的 `PUBLISH_TOKEN` 环境变量，避免与其他平台的发布凭据混淆。
 
-多行 PEM 内容可以直接保存为 GitHub Actions secret。不要把 token、private key、密码或证书文件提交到仓库。首次发布必须先在 JetBrains Marketplace 手动创建插件并上传一个已签名版本；Marketplace 接受该插件 ID 后，后续新版本才可由 `publishPlugin` 自动发布。首次 tag run 即使因插件尚未创建而发布失败，只要签名已完成，workflow artifact 中仍会保留 `*-signed.zip`，可用于首次手动上传。插件 ID 固定为 `io.github.localconfigsync.jetbrains`，Marketplace 不接受重复 artifact 版本，因此每次发布必须在 manifest 中填写尚未发布的新版本。
+publish job 会在 GitHub-hosted runner 的临时目录中生成一次性 RSA private key、自签名证书和随机密码，并仅在当前 Gradle `publishPlugin` 进程中用于作者签名；这些签名材料不会写入仓库、GitHub Secrets 或 workflow artifact。当前发布目标是 JetBrains Marketplace，因此不需要在发布之间复用作者签名身份；如果未来需要直接分发 GitHub artifact，或 Marketplace 支持并要求绑定作者公钥，应改为受保护的长期 signing key。
 
-也可以使用已登录的 GitHub CLI 配置 Secrets；token 和密码命令会交互读取值，避免进入 shell history：
+首次发布必须先在 JetBrains Marketplace 手动创建插件并上传一个已签名版本；Marketplace 接受该插件 ID 后，后续新版本才可由 `publishPlugin` 自动发布。首次 tag run 即使因插件尚未创建而发布失败，只要签名已完成，workflow artifact 中仍会保留 `*-signed.zip`，可用于首次手动上传。插件 ID 固定为 `io.github.localconfigsync.jetbrains`，Marketplace 不接受重复 artifact 版本，因此每次发布必须在 manifest 中填写尚未发布的新版本。
+
+也可以使用已登录的 GitHub CLI 配置 Secret；命令会交互读取 token，避免进入 shell history：
 
 ```bash
-gh secret set PUBLISH_TOKEN
-gh secret set CERTIFICATE_CHAIN < chain.crt
-gh secret set PRIVATE_KEY < private.pem
-gh secret set PRIVATE_KEY_PASSWORD
+gh secret set JETBRAINS_PUBLISH_TOKEN
 ```
 
 插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。`Sync Now` 作为顶部主操作展示，Project、Repository 与最近同步时间使用只读摘要，不再注册底部状态栏组件。
