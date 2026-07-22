@@ -52,6 +52,9 @@ intellijPlatform {
     }
     publishing {
         token = providers.environmentVariable("PUBLISH_TOKEN")
+        channels = providers.gradleProperty("publishChannel")
+            .map { listOf(it) }
+            .orElse(listOf("default"))
     }
     pluginConfiguration {
         id = "io.github.localconfigsync.jetbrains"

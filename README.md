@@ -44,9 +44,11 @@ JetBrains Plugin -> VS Code Extension -> Cursor Extension -> CLI
 packages/
   jetbrains/  Kotlin：Settings、Setup/Auth/Sync action、status widget
 cmd/
-  local-config/  Go：CLI 与稳定 JSON contract
+  local-config/      Go：CLI 与稳定 JSON contract
+  release-manifest/  Go：Release manifest 校验与标准化
 internal/
-  core/          Go：领域模型、Repository Driver、mapping、sync、安全策略与测试
+  core/              Go：领域模型、Repository Driver、mapping、sync、安全策略与测试
+  releasemanifest/   Go：Release manifest schema 与校验规则
 ```
 
 JetBrains 插件不直接操作 Git 或配置文件，只调用 `local-config ... --json`。
@@ -84,14 +86,46 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 
 ## 发布 JetBrains 插件
 
-仓库使用统一的 `v<semver>` release tag。每个平台的 workflow 先比较上一个 release tag 与当前 tag 之间的变更范围，只构建和发布发生变化的平台；`cmd/`、`internal/`、`go.mod` 或 `go.sum` 中的 core/CLI 变更会触发所有依赖该 core 的平台。JetBrains 或 core 有变化时，GitHub Actions 才执行六平台 CLI 构建、完整插件验证、签名并发布到 JetBrains Marketplace 的 default channel。tag 同时决定本次实际发布产物的版本，例如：
+仓库使用 Release manifest 描述一次发布批次。`release-*` tag 只用于标识和触发发布，不再充当某个平台的版本号；各 artifact 在 manifest 中声明自己的 SemVer 和发布 channel。
 
-```bash
-git tag v0.2.0
-git push origin v0.2.0
+每个 tag 必须有一份同名、已提交的 manifest：
+
+```text
+.release/manifests/<tag>.yaml
 ```
 
-如果该版本只修改其他平台的 UI，JetBrains jobs 会直接跳过；如果同一版本修改了多个平台，各平台使用同一个 tag 分别发布，不需要创建多个 tag。首次使用统一 release tag、找不到上一个 `vX.Y.Z` tag 时，所有平台都应视为有变化并执行一次发布。
+例如 `.release/manifests/release-2026.07.22.1.yaml`：
+
+```yaml
+schemaVersion: 1
+releaseId: release-2026.07.22.1
+artifacts:
+  jetbrains:
+    version: 0.1.6
+    channel: default
+```
+
+第一版只注册 `jetbrains` artifact。未知字段、未知 artifact、tag 与 `releaseId` 不一致、非法 SemVer、非法 channel 或多 YAML document 都会在构建和发布前失败。未写入 manifest 的平台不构建、不发布；未来新增平台时，应同时注册 manifest artifact 和对应 publisher workflow。
+
+可以从 `.release/manifest.example.yaml` 复制并编辑，然后在打 tag 前本地校验：
+
+```bash
+cp .release/manifest.example.yaml \
+  .release/manifests/release-2026.07.22.1.yaml
+
+go run ./cmd/release-manifest \
+  --file .release/manifests/release-2026.07.22.1.yaml \
+  --tag release-2026.07.22.1
+```
+
+校验并提交 manifest 后，创建完全一致的 tag：
+
+```bash
+git tag release-2026.07.22.1
+git push origin release-2026.07.22.1
+```
+
+GitHub Actions 从 tag 对应 commit 读取 manifest。包含 `jetbrains` 时才执行六平台 CLI 构建、完整 Plugin Verifier、签名，并将 manifest 中的 version/channel 传给 `publishPlugin`。同一个 tag 未来可以列出多个独立版本的平台，由各 publisher 并行处理；发布失败时重新运行 failed jobs，不移动 tag、不修改该 tag 下的 manifest。
 
 发布前需要在仓库的 `Settings | Secrets and variables | Actions` 中配置四个 Repository secrets：
 
@@ -100,7 +134,7 @@ git push origin v0.2.0
 - `PRIVATE_KEY`：与证书对应的 private key 文件（`private.pem`）的完整内容。
 - `PRIVATE_KEY_PASSWORD`：private key 的密码。
 
-多行 PEM 内容可以直接保存为 GitHub Actions secret。不要把 token、private key、密码或证书文件提交到仓库。首次发布必须先在 JetBrains Marketplace 手动创建插件并上传一个已签名版本；Marketplace 接受该插件 ID 后，后续新版本才可由 `publishPlugin` 自动发布。首次 tag run 即使因插件尚未创建而发布失败，只要签名已完成，workflow artifact 中仍会保留 `*-signed.zip`，可用于首次手动上传。插件 ID 固定为 `io.github.localconfigsync.jetbrains`，Marketplace 不接受重复版本，因此每次发布必须使用新的 tag 版本。
+多行 PEM 内容可以直接保存为 GitHub Actions secret。不要把 token、private key、密码或证书文件提交到仓库。首次发布必须先在 JetBrains Marketplace 手动创建插件并上传一个已签名版本；Marketplace 接受该插件 ID 后，后续新版本才可由 `publishPlugin` 自动发布。首次 tag run 即使因插件尚未创建而发布失败，只要签名已完成，workflow artifact 中仍会保留 `*-signed.zip`，可用于首次手动上传。插件 ID 固定为 `io.github.localconfigsync.jetbrains`，Marketplace 不接受重复 artifact 版本，因此每次发布必须在 manifest 中填写尚未发布的新版本。
 
 也可以使用已登录的 GitHub CLI 配置 Secrets；token 和密码命令会交互读取值，避免进入 shell history：
 

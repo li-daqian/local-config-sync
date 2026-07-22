@@ -4,9 +4,10 @@ on:
   push:
     branches: [main]
     tags:
-      - "v*"
+      - "release-*"
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
+      - ".release/**"
       - "packages/jetbrains/**"
       - "cmd/**"
       - "internal/**"
@@ -18,6 +19,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/jetbrains-plugin.yml"
+      - ".release/**"
       - "packages/jetbrains/**"
       - "cmd/**"
       - "internal/**"
@@ -41,57 +43,65 @@ jobs:
     outputs:
       is_release: ${{ steps.context.outputs.is_release }}
       version: ${{ steps.context.outputs.version }}
-      jetbrains_changed: ${{ steps.context.outputs.jetbrains_changed }}
+      channel: ${{ steps.context.outputs.channel }}
+      jetbrains_release: ${{ steps.context.outputs.jetbrains_release }}
     steps:
-      - name: Check out release history
+      - name: Check out release
         if: ${{ github.ref_type == 'tag' }}
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
-      - name: Resolve version and JetBrains release scope
+      - name: Set up Go
+        if: ${{ github.ref_type == 'tag' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve release manifest
         id: context
         shell: bash
         run: |
           if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
             echo "is_release=false" >> "$GITHUB_OUTPUT"
             echo "version=" >> "$GITHUB_OUTPUT"
-            echo "jetbrains_changed=true" >> "$GITHUB_OUTPUT"
+            echo "channel=" >> "$GITHUB_OUTPUT"
+            echo "jetbrains_release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          version="${GITHUB_REF_NAME#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Tag must use v<semver>, for example v0.2.0." >&2
+          manifest_path=".release/manifests/$GITHUB_REF_NAME.yaml"
+          if [[ ! -f "$manifest_path" ]]; then
+            echo "Release manifest not found: $manifest_path" >&2
             exit 1
           fi
 
-          previous_tag=""
-          while IFS= read -r candidate; do
-            if [[ "$candidate" != "$GITHUB_REF_NAME" && "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              previous_tag="$candidate"
-              break
-            fi
-          done < <(git tag --merged "$GITHUB_SHA" --sort=-version:refname)
-
-          jetbrains_changed=false
-          if [[ -z "$previous_tag" ]]; then
-            jetbrains_changed=true
-          elif ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- \
-            packages/jetbrains cmd internal go.mod go.sum; then
-            jetbrains_changed=true
+          go build -trimpath -o "$RUNNER_TEMP/release-manifest" ./cmd/release-manifest
+          manifest_json="$("$RUNNER_TEMP/release-manifest" \
+            --file "$manifest_path" \
+            --tag "$GITHUB_REF_NAME" \
+            --json)"
+          version="$(jq -r '.artifacts.jetbrains.version // empty' <<< "$manifest_json")"
+          channel="$(jq -r '.artifacts.jetbrains.channel // empty' <<< "$manifest_json")"
+          jetbrains_release=false
+          if [[ -n "$version" ]]; then
+            jetbrains_release=true
           fi
 
           echo "is_release=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "jetbrains_changed=$jetbrains_changed" >> "$GITHUB_OUTPUT"
-          echo "Previous release: ${previous_tag:-none}" >> "$GITHUB_STEP_SUMMARY"
-          echo "JetBrains/core changed: $jetbrains_changed" >> "$GITHUB_STEP_SUMMARY"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "jetbrains_release=$jetbrains_release" >> "$GITHUB_OUTPUT"
+          echo "Release manifest: $manifest_path" >> "$GITHUB_STEP_SUMMARY"
+          echo "JetBrains release: $jetbrains_release" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$jetbrains_release" == "true" ]]; then
+            echo "JetBrains version: $version" >> "$GITHUB_STEP_SUMMARY"
+            echo "JetBrains channel: $channel" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   native-cli:
     name: Native CLI (${{ matrix.target }})
     needs: release_context
-    if: ${{ needs.release_context.outputs.jetbrains_changed == 'true' }}
+    if: ${{ needs.release_context.outputs.jetbrains_release == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +145,7 @@ jobs:
   verify:
     name: Build and verify
     needs: release_context
-    if: ${{ needs.release_context.outputs.jetbrains_changed == 'true' }}
+    if: ${{ needs.release_context.outputs.jetbrains_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -169,7 +179,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run plugin verification
-        run: packages/jetbrains/gradlew -p packages/jetbrains -PallowIdeSdkDownload=true test verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
+        env:
+          RELEASE_PLUGIN_VERSION: ${{ needs.release_context.outputs.version }}
+        run: |
+          version_args=()
+          if [[ -n "$RELEASE_PLUGIN_VERSION" ]]; then
+            version_args+=("-PpluginVersion=$RELEASE_PLUGIN_VERSION")
+          fi
+          packages/jetbrains/gradlew -p packages/jetbrains \
+            -PallowIdeSdkDownload=true \
+            "${version_args[@]}" \
+            test verifyPluginProjectConfiguration verifyPluginStructure verifyPlugin
 
       - name: Summarize plugin verifier reports
         if: ${{ always() }}
@@ -200,7 +220,7 @@ jobs:
     name: Publish to JetBrains Marketplace
     if: >-
       ${{ needs.release_context.outputs.is_release == 'true' &&
-          needs.release_context.outputs.jetbrains_changed == 'true' }}
+          needs.release_context.outputs.jetbrains_release == 'true' }}
     needs: [release_context, native-cli, verify]
     runs-on: ubuntu-latest
     steps:
@@ -240,6 +260,7 @@ jobs:
           packages/jetbrains/gradlew -p packages/jetbrains \
             -PallowIdeSdkDownload=true \
             -PpluginVersion=${{ needs.release_context.outputs.version }} \
+            -PpublishChannel=${{ needs.release_context.outputs.channel }} \
             publishPlugin
 
       - name: Upload signed plugin distribution
