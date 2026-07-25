@@ -88,16 +88,7 @@ intellijPlatform {
             </p>
         """.trimIndent()
         changeNotes = """
-            <p>File-level synchronization workspace.</p>
-            <ul>
-              <li>Replace the status bar widget and verbose cards with a file status table.</li>
-              <li>Add mappings directly from the table toolbar.</li>
-              <li>Show local and Repository content in the IntelliJ diff viewer.</li>
-              <li>Resolve copy-mode file conflicts with an explicit local or Repository choice.</li>
-              <li>Promote Sync Now as the primary action and show Project/Repository as read-only context.</li>
-              <li>Preview upload and download directions before synchronization.</li>
-              <li>Format last sync timestamps in the user's local date and time format.</li>
-            </ul>
+            <p>Improve the plugin listing with an up-to-date Tool Window screenshot.</p>
         """.trimIndent()
         ideaVersion {
             sinceBuild = "261"
