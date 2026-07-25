@@ -74,6 +74,13 @@ intellijPlatform {
               <li>file-level sync status and conflict resolution in the Tool Window.</li>
             </ul>
             <p>
+              <img
+                src="https://img.lidaqian.me/blog/2b27a103fdf447178d8bf70a6f9e094a.png"
+                alt="Local Config Sync JetBrains plugin Tool Window"
+                width="800"
+              />
+            </p>
+            <p>
               The plugin includes native CLI binaries for Linux, macOS, and Windows on x64 and
               ARM64, with no Node.js runtime requirement. Advanced executable overrides are available under
               <em>Settings | Tools | Local Config Sync</em>. The plugin does not store Git credentials

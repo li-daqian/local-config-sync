@@ -20,6 +20,8 @@ Local Config Sync 是一个面向开发者的本地配置同步工具。它解�
 Git remote / local folder / WebDAV / S3-compatible storage
 ```
 
+![Local Config Sync JetBrains plugin Tool Window](https://img.lidaqian.me/blog/2b27a103fdf447178d8bf70a6f9e094a.png)
+
 ## 产品定位
 
 本项目不是一个只服务 JetBrains 的插件，而是：
