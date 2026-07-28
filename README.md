@@ -1,6 +1,6 @@
 # Local Config Sync
 
-> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.5`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 IntelliJ Platform 2026.1+ 插件。
+> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.5`；VS Code 插件开发版本：`0.1.0`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 JetBrains / VS Code 两个薄入口。
 
 Local Config Sync 是一个面向开发者的本地配置同步工具。它解决的问题是：
 
@@ -45,6 +45,7 @@ JetBrains Plugin -> VS Code Extension -> Cursor Extension -> CLI
 ```text
 packages/
   jetbrains/  Kotlin：Settings、Setup/Auth/Sync action、status widget
+  vscode/     TypeScript：multi-root Tree View、Setup/Auth/Sync、diff/resolve
 cmd/
   local-config/      Go：CLI 与稳定 JSON contract
   release-manifest/  Go：Release manifest 校验与标准化
@@ -54,6 +55,7 @@ internal/
 ```
 
 JetBrains 插件不直接操作 Git 或配置文件，只调用 `local-config ... --json`。
+VS Code 插件遵循同一边界，并通过 `contractVersion` 检查 CLI JSON contract 兼容性。
 
 ## 构建与安装
 
@@ -85,6 +87,18 @@ packages/jetbrains/gradlew -p packages/jetbrains \
 ```
 
 安装 `packages/jetbrains/build/distributions/local-config-sync-jetbrains-0.1.5.zip` 后即可使用。插件内置 Linux、macOS、Windows 的 amd64/arm64 六个 native CLI binary，不要求用户安装 Node.js；`Settings | Tools | Local Config Sync` 仅保留自定义 CLI 路径作为高级 override。插件当前以 IntelliJ Platform 2026.1（build 261）为最低版本。
+
+构建和检查 VS Code 插件：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm vscode:check
+
+# 当前 host platform 的 native CLI + platform-specific VSIX
+pnpm --dir packages/vscode package --target linux-x64
+```
+
+VS Code 插件使用 workspace extension host，因此在 WSL、Remote SSH 和 Dev Container 中与远端 workspace、Git 和用户配置目录运行在同一侧。首版不支持 untrusted workspace、virtual workspace 或纯 `vscode.dev` browser extension。详细设计和开发方式见 [VS Code 插件设计](docs/vscode-extension.md)。
 
 ## 发布 JetBrains 插件
 

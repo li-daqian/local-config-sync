@@ -1,0 +1,11 @@
+.vscode/**
+src/**
+test/**
+node_modules/**
+.go-cache/**
+scripts/**
+tsconfig.json
+esbuild.mjs
+*.map
+*.vsix
+!bin/**

@@ -57,18 +57,19 @@
 - 可选加密方案调研。
 - 1Password / Bitwarden 集成调研。
 
-## 当前建议的第一步
+## P6: VS Code 插件
 
-先不要写插件。先实现 CLI MVP：
+- [x] 插件工程、TypeScript bundle 和 platform-specific VSIX。
+- [x] bundled native CLI 和 `contractVersion` compatibility handshake。
+- [x] multi-root Tree View 和 file-level status。
+- [x] GitHub Setup、Git authentication、Sync、diff 和 conflict resolve。
+- [x] sensitive-file 二次确认和 Workspace Trust 边界。
+- [ ] Windows、macOS、Linux、Alpine 的发布构建矩阵。
+- [ ] Visual Studio Marketplace publisher 和 release workflow。
+- [ ] WSL、Remote SSH、Dev Container 的发布前 runtime matrix。
+- [ ] stale Repository lock 诊断和显式恢复。
 
-```bash
-local-config doctor
-local-config init
-local-config repository add git
-local-config repository add local-folder
-local-config link
-local-config status --json
-local-config sync
-```
+## 当前建议的下一步
 
-当 CLI 可以通过 Git 和 Local Folder 两个 Driver 稳定完成配置同步后，再做 JetBrains 插件外壳。第二个 Driver 是验证抽象没有泄漏 Git 语义的必要验收项。
+补齐 VS Code platform-specific 发布闭环：在 native runner 上构建匹配 target 的 CLI，生成每个平台只包含
+一个 binary 的 VSIX，完成 Remote/WSL 和 conflict/sensitive-file runtime matrix 后再接入 Marketplace。

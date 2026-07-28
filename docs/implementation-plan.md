@@ -158,9 +158,21 @@ local-config doctor
 
 ## Phase 6: 多入口
 
-候选入口：
+已实现入口：
 
 - VS Code extension。
+
+VS Code MVP 当前包含：
+
+- platform-specific VSIX 和 bundled native CLI；
+- multi-root workspace 状态 Tree View；
+- GitHub Setup、Git authentication 和单文件 `copy` mapping；
+- Sync 方向确认、built-in diff 和 expected-revision conflict resolve；
+- CLI `contractVersion` 兼容性检查和 JSON runtime validation；
+- untrusted / virtual workspace 显式禁用。
+
+候选入口：
+
 - Cursor extension。
 - Desktop tray app。
 - Web UI。
@@ -174,7 +186,8 @@ local-config doctor
 
 入口策略：
 
-- VS Code / Cursor extension：调用 native CLI，用户可见行为与其他入口保持一致。
+- VS Code extension：已通过 native CLI 实现，用户可见行为与 JetBrains 入口保持一致。
+- Cursor extension：优先复用 VS Code VSIX 和相同 native CLI contract。
 - Desktop tray app：调用 CLI 或启动 local agent，避免复制同步算法。
 - Web UI：只访问本机 local agent，不直接访问文件系统或配置仓库。
 - local agent：作为 CLI contract 的服务化封装，不引入新的业务规则来源。

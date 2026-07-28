@@ -1,0 +1,200 @@
+{
+  "name": "local-config-sync",
+  "displayName": "Local Config Sync",
+  "description": "Safely synchronize project-local overlay configuration through the Local Config Sync CLI.",
+  "version": "0.1.0",
+  "publisher": "lidaqian",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/li-daqian/local-config-sync.git",
+    "directory": "packages/vscode"
+  },
+  "homepage": "https://github.com/li-daqian/local-config-sync",
+  "bugs": {
+    "url": "https://github.com/li-daqian/local-config-sync/issues"
+  },
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "local config",
+    "configuration",
+    "sync",
+    "git"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Local Config Sync executes a native CLI and Git, and writes explicitly mapped files in the workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "localConfigSync.setup",
+        "title": "Local Config Sync: Add Mapping",
+        "icon": "$(add)"
+      },
+      {
+        "command": "localConfigSync.refresh",
+        "title": "Local Config Sync: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "localConfigSync.sync",
+        "title": "Local Config Sync: Sync Now",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "localConfigSync.authenticate",
+        "title": "Local Config Sync: Authenticate Git Repository",
+        "icon": "$(key)"
+      },
+      {
+        "command": "localConfigSync.diff",
+        "title": "Local Config Sync: View Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "localConfigSync.resolveLocal",
+        "title": "Local Config Sync: Use Local Version"
+      },
+      {
+        "command": "localConfigSync.resolveRemote",
+        "title": "Local Config Sync: Use Repository Version"
+      },
+      {
+        "command": "localConfigSync.openLogs",
+        "title": "Local Config Sync: Open Logs"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "localConfigSync",
+          "title": "Local Config Sync",
+          "icon": "resources/local-config-sync.svg"
+        }
+      ]
+    },
+    "views": {
+      "localConfigSync": [
+        {
+          "id": "localConfigSync.projects",
+          "name": "Projects"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "localConfigSync.projects",
+        "contents": "Open a trusted local or remote workspace folder to use Local Config Sync.",
+        "when": "!localConfigSync.hasWorkspace"
+      },
+      {
+        "view": "localConfigSync.projects",
+        "contents": "No local configuration mappings are set up.\n[Add Mapping](command:localConfigSync.setup)",
+        "when": "localConfigSync.hasWorkspace && localConfigSync.hasMappings == false"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "localConfigSync.setup",
+          "when": "view == localConfigSync.projects && isWorkspaceTrusted",
+          "group": "navigation@1"
+        },
+        {
+          "command": "localConfigSync.sync",
+          "when": "view == localConfigSync.projects && isWorkspaceTrusted",
+          "group": "navigation@2"
+        },
+        {
+          "command": "localConfigSync.refresh",
+          "when": "view == localConfigSync.projects && isWorkspaceTrusted",
+          "group": "navigation@3"
+        },
+        {
+          "command": "localConfigSync.authenticate",
+          "when": "view == localConfigSync.projects && isWorkspaceTrusted",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "localConfigSync.sync",
+          "when": "view == localConfigSync.projects && viewItem == localConfigSync.project",
+          "group": "inline@1"
+        },
+        {
+          "command": "localConfigSync.setup",
+          "when": "view == localConfigSync.projects && viewItem == localConfigSync.project",
+          "group": "localConfigSync.project@1"
+        },
+        {
+          "command": "localConfigSync.authenticate",
+          "when": "view == localConfigSync.projects && viewItem == localConfigSync.project",
+          "group": "localConfigSync.project@2"
+        },
+        {
+          "command": "localConfigSync.diff",
+          "when": "view == localConfigSync.projects && viewItem =~ /localConfigSync\\.file\\.(changed|conflict)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "localConfigSync.resolveLocal",
+          "when": "view == localConfigSync.projects && viewItem == localConfigSync.file.conflict.resolvable",
+          "group": "localConfigSync.resolve@1"
+        },
+        {
+          "command": "localConfigSync.resolveRemote",
+          "when": "view == localConfigSync.projects && viewItem == localConfigSync.file.conflict.resolvable",
+          "group": "localConfigSync.resolve@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Local Config Sync",
+      "properties": {
+        "localConfigSync.cliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Advanced override for the local-config executable. Leave empty to use the bundled CLI."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs --production",
+    "bundle-cli": "node scripts/bundle-cli.mjs",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm check-types && pnpm test && pnpm build",
+    "vscode:prepublish": "pnpm build",
+    "package": "pnpm bundle-cli && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

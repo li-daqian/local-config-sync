@@ -9,7 +9,10 @@ import (
 	"github.com/li-daqian/local-config-sync/internal/core"
 )
 
-const version = "0.1.0"
+const (
+	version         = "0.1.0"
+	contractVersion = 1
+)
 
 type parsedArguments struct {
 	Options     map[string]string
@@ -134,6 +137,12 @@ func run(rawArgs []string) (activeCommand string, err error) {
 		return "help", nil
 	}
 	if args[0] == "--version" || args[0] == "-V" {
+		if jsonOutput {
+			return "version", success("version", map[string]any{
+				"version":         version,
+				"contractVersion": contractVersion,
+			}, true)
+		}
 		fmt.Fprintln(os.Stdout, version)
 		return "version", nil
 	}

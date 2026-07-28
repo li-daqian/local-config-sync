@@ -6,6 +6,9 @@ coverage/
 .intellijPlatform/
 packages/jetbrains/build/
 packages/jetbrains/.gradle/
+packages/vscode/bin/
+packages/vscode/.go-cache/
+packages/vscode/*.vsix
 .env
 .env.*
 !.env.example

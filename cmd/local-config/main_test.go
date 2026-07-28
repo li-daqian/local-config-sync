@@ -33,6 +33,28 @@ func captureStdout(t *testing.T, operation func() error) []byte {
 	return content
 }
 
+func TestVersionJSONContract(t *testing.T) {
+	output := captureStdout(t, func() error {
+		command, err := run([]string{"--version", "--json"})
+		if command != "version" {
+			t.Fatalf("unexpected command %q", command)
+		}
+		return err
+	})
+	var response struct {
+		OK              bool   `json:"ok"`
+		Command         string `json:"command"`
+		Version         string `json:"version"`
+		ContractVersion int    `json:"contractVersion"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		t.Fatalf("invalid version JSON: %v\n%s", err, output)
+	}
+	if !response.OK || response.Command != "version" || response.Version != version || response.ContractVersion != contractVersion {
+		t.Fatalf("unexpected version response: %#v", response)
+	}
+}
+
 func TestFilePreviewAndLinkJSONContract(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
