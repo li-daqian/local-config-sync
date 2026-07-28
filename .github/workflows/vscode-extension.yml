@@ -293,7 +293,11 @@ jobs:
           fi
 
           mapfile -d '' vsix_files < <(
-            find artifacts -type f -name '*.vsix' -print0 | sort -z
+            find "$GITHUB_WORKSPACE/artifacts" \
+              -type f \
+              -name '*.vsix' \
+              -print0 |
+              sort -z
           )
           if [[ "${#vsix_files[@]}" -ne 8 ]]; then
             echo "Expected 8 platform-specific VSIX files, found ${#vsix_files[@]}" >&2
