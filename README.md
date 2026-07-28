@@ -1,6 +1,6 @@
 # Local Config Sync
 
-> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.5`；VS Code 插件开发版本：`0.1.0`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 JetBrains / VS Code 两个薄入口。
+> 当前 CLI/core 版本：`0.1.0`；JetBrains 插件版本：`0.1.5`；VS Code 插件版本：`0.1.0`。包含独立 CLI/core、Git 与 local-folder Repository Driver，以及 JetBrains / VS Code 两个薄入口。
 
 Local Config Sync 是一个面向开发者的本地配置同步工具。它解决的问题是：
 

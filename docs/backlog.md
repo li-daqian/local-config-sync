@@ -66,7 +66,7 @@
 - [x] sensitive-file 二次确认和 Workspace Trust 边界。
 - [x] Windows、macOS、Linux、Alpine 的发布构建矩阵。
 - [x] Visual Studio Marketplace release workflow。
-- [ ] 使用 publisher `li-daqian` 和已配置的 `VSCE_PAT` 完成首次发布。
+- [x] 使用 publisher `li-daqian` 和已配置的 `VSCE_PAT` 完成首次发布。
 - [ ] WSL、Remote SSH、Dev Container 的发布前 runtime matrix。
 - [ ] stale Repository lock 诊断和显式恢复。
 
