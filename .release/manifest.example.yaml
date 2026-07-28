@@ -4,3 +4,6 @@ artifacts:
   jetbrains:
     version: 0.1.6
     channel: default
+  vscode:
+    version: 0.1.0
+    channel: default

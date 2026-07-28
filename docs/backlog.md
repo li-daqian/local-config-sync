@@ -64,12 +64,13 @@
 - [x] multi-root Tree View 和 file-level status。
 - [x] GitHub Setup、Git authentication、Sync、diff 和 conflict resolve。
 - [x] sensitive-file 二次确认和 Workspace Trust 边界。
-- [ ] Windows、macOS、Linux、Alpine 的发布构建矩阵。
-- [ ] Visual Studio Marketplace publisher 和 release workflow。
+- [x] Windows、macOS、Linux、Alpine 的发布构建矩阵。
+- [x] Visual Studio Marketplace release workflow。
+- [ ] 使用 publisher `li-daqian` 和已配置的 `VSCE_PAT` 完成首次发布。
 - [ ] WSL、Remote SSH、Dev Container 的发布前 runtime matrix。
 - [ ] stale Repository lock 诊断和显式恢复。
 
 ## 当前建议的下一步
 
-补齐 VS Code platform-specific 发布闭环：在 native runner 上构建匹配 target 的 CLI，生成每个平台只包含
-一个 binary 的 VSIX，完成 Remote/WSL 和 conflict/sensitive-file runtime matrix 后再接入 Marketplace。
+完成 Remote/WSL 和 conflict/sensitive-file runtime matrix，并将 Marketplace PAT 认证迁移到
+Microsoft Entra workload identity。

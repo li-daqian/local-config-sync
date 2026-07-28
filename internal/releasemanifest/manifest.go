@@ -21,6 +21,7 @@ var (
 
 var supportedArtifacts = map[string]struct{}{
 	"jetbrains": {},
+	"vscode":     {},
 }
 
 // Manifest is the immutable release contract stored at the commit referenced by a release tag.

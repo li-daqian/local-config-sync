@@ -3,7 +3,7 @@
   "displayName": "Local Config Sync",
   "description": "Safely synchronize project-local overlay configuration through the Local Config Sync CLI.",
   "version": "0.1.0",
-  "publisher": "lidaqian",
+  "publisher": "li-daqian",
   "license": "MIT",
   "repository": {
     "type": "git",

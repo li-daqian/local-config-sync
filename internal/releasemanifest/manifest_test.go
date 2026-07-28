@@ -12,6 +12,9 @@ releaseId: release-2026.07.22.1
 artifacts:
   jetbrains:
     version: 0.8.0
+  vscode:
+    version: 0.3.0
+    channel: pre-release
 `), "release-2026.07.22.1")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -23,6 +26,14 @@ artifacts:
 	}
 	if artifact.Channel != "default" {
 		t.Fatalf("Channel = %q, want %q", artifact.Channel, "default")
+	}
+
+	vscodeArtifact := manifest.Artifacts["vscode"]
+	if vscodeArtifact.Version != "0.3.0" {
+		t.Fatalf("VS Code Version = %q, want %q", vscodeArtifact.Version, "0.3.0")
+	}
+	if vscodeArtifact.Channel != "pre-release" {
+		t.Fatalf("VS Code Channel = %q, want %q", vscodeArtifact.Channel, "pre-release")
 	}
 }
 
@@ -100,11 +111,11 @@ artifacts:
 schemaVersion: 1
 releaseId: release-1
 artifacts:
-  vscode:
+  unknown:
     version: 1.0.0
 `,
 			expectedReleaseID: "release-1",
-			wantError:         `unsupported artifact "vscode"`,
+			wantError:         `unsupported artifact "unknown"`,
 		},
 		{
 			name: "invalid channel",

@@ -100,7 +100,7 @@ pnpm --dir packages/vscode package --target linux-x64
 
 VS Code 插件使用 workspace extension host，因此在 WSL、Remote SSH 和 Dev Container 中与远端 workspace、Git 和用户配置目录运行在同一侧。首版不支持 untrusted workspace、virtual workspace 或纯 `vscode.dev` browser extension。详细设计和开发方式见 [VS Code 插件设计](docs/vscode-extension.md)。
 
-## 发布 JetBrains 插件
+## 发布 IDE 插件
 
 仓库使用 Release manifest 描述一次发布批次。`release-*` tag 只用于标识和触发发布，不再充当某个平台的版本号；各 artifact 在 manifest 中声明自己的 SemVer 和发布 channel。
 
@@ -119,9 +119,14 @@ artifacts:
   jetbrains:
     version: 0.1.6
     channel: default
+  vscode:
+    version: 0.1.0
+    channel: default
 ```
 
-第一版只注册 `jetbrains` artifact。未知字段、未知 artifact、tag 与 `releaseId` 不一致、非法 SemVer、非法 channel 或多 YAML document 都会在构建和发布前失败。未写入 manifest 的平台不构建、不发布；未来新增平台时，应同时注册 manifest artifact 和对应 publisher workflow。
+当前注册了 `jetbrains` 和 `vscode` artifact。未知字段、未知 artifact、tag 与 `releaseId`
+不一致、非法 SemVer、非法 channel 或多 YAML document 都会在构建和发布前失败。未写入
+manifest 的平台不构建、不发布。`vscode.channel` 支持 `default` 和 `pre-release`。
 
 可以从 `.release/manifest.example.yaml` 复制并编辑，然后在打 tag 前本地校验：
 
@@ -141,11 +146,18 @@ git tag release-2026.07.22.1
 git push origin release-2026.07.22.1
 ```
 
-GitHub Actions 从 tag 对应 commit 读取 manifest。包含 `jetbrains` 时才执行六平台 CLI 构建、完整 Plugin Verifier、签名，并将 manifest 中的 version/channel 传给 `publishPlugin`。同一个 tag 未来可以列出多个独立版本的平台，由各 publisher 并行处理；发布失败时重新运行 failed jobs，不移动 tag、不修改该 tag 下的 manifest。
+GitHub Actions 从 tag 对应 commit 读取 manifest。包含 `jetbrains` 时执行六平台 CLI 构建、
+完整 Plugin Verifier、签名和 JetBrains Marketplace 发布；包含 `vscode` 时在 native runner
+构建 Windows、macOS、Linux、Alpine 的八个 platform-specific VSIX，并统一发布到 Visual
+Studio Marketplace。两个 artifact 独立声明 version/channel，也可以在同一个 tag 中并行发布；
+发布失败时重新运行 failed jobs，不移动 tag、不修改该 tag 下的 manifest。
 
-发布前只需要在仓库的 `Settings | Secrets and variables | Actions` 中配置一个 Repository secret：
+发布前在仓库的 `Settings | Secrets and variables | Actions` 中配置对应的 Repository secret：
 
 - `JETBRAINS_PUBLISH_TOKEN`：JetBrains Marketplace Profile 的 `My Tokens` 页面生成的 Personal Access Token。workflow 仅在 JetBrains publish job 内将其映射为 Gradle 使用的 `PUBLISH_TOKEN` 环境变量，避免与其他平台的发布凭据混淆。
+- `VSCE_PAT`：Azure DevOps Personal Access Token。创建时将 Organization 设为
+  `All accessible organizations`，只授予 `Marketplace > Manage` scope。创建 PAT 的 Microsoft
+  account 必须能够管理 `packages/vscode/package.json` 中声明的 publisher `li-daqian`。
 
 publish job 会在 GitHub-hosted runner 的临时目录中生成一次性 RSA private key、自签名证书和随机密码，并仅在当前 Gradle `publishPlugin` 进程中用于作者签名；这些签名材料不会写入仓库、GitHub Secrets 或 workflow artifact。当前发布目标是 JetBrains Marketplace，因此不需要在发布之间复用作者签名身份；如果未来需要直接分发 GitHub artifact，或 Marketplace 支持并要求绑定作者公钥，应改为受保护的长期 signing key。
 
@@ -155,7 +167,11 @@ publish job 会在 GitHub-hosted runner 的临时目录中生成一次性 RSA pr
 
 ```bash
 gh secret set JETBRAINS_PUBLISH_TOKEN
+gh secret set VSCE_PAT
 ```
+
+VS Code Marketplace 的全局 Azure DevOps PAT 将在 2026-12-01 停止工作。当前 workflow 先使用
+`VSCE_PAT` 完成发布闭环，后续应迁移到 Microsoft Entra workload identity，再移除 PAT。
 
 插件右侧 `Local Config Sync` Tool Window 以表格展示本地文件、Repository 文件及 file-level 同步状态，并提供新增 Mapping、diff、显式冲突解决、Sync、Git Auth 和 Refresh。`Sync Now` 作为顶部主操作展示，Project、Repository 与最近同步时间使用只读摘要，不再注册底部状态栏组件。
 

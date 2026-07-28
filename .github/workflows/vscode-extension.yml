@@ -1,0 +1,310 @@
+name: VS Code Extension
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "release-*"
+    paths:
+      - ".github/workflows/vscode-extension.yml"
+      - ".release/**"
+      - "packages/vscode/**"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  pull_request:
+    paths:
+      - ".github/workflows/vscode-extension.yml"
+      - ".release/**"
+      - "packages/vscode/**"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+jobs:
+  release_context:
+    name: Resolve release scope
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.context.outputs.is_release }}
+      version: ${{ steps.context.outputs.version }}
+      channel: ${{ steps.context.outputs.channel }}
+      vscode_release: ${{ steps.context.outputs.vscode_release }}
+    steps:
+      - name: Check out release
+        if: ${{ github.ref_type == 'tag' }}
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        if: ${{ github.ref_type == 'tag' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve release manifest
+        id: context
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "channel=" >> "$GITHUB_OUTPUT"
+            echo "vscode_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          manifest_path=".release/manifests/$GITHUB_REF_NAME.yaml"
+          if [[ ! -f "$manifest_path" ]]; then
+            echo "Release manifest not found: $manifest_path" >&2
+            exit 1
+          fi
+
+          go build -trimpath -o "$RUNNER_TEMP/release-manifest" ./cmd/release-manifest
+          manifest_json="$("$RUNNER_TEMP/release-manifest" \
+            --file "$manifest_path" \
+            --tag "$GITHUB_REF_NAME" \
+            --json)"
+          version="$(jq -r '.artifacts.vscode.version // empty' <<< "$manifest_json")"
+          channel="$(jq -r '.artifacts.vscode.channel // empty' <<< "$manifest_json")"
+          vscode_release=false
+          if [[ -n "$version" ]]; then
+            vscode_release=true
+          fi
+
+          if [[ "$vscode_release" == "true" &&
+                "$channel" != "default" &&
+                "$channel" != "pre-release" ]]; then
+            echo "Unsupported VS Code channel: $channel" >&2
+            echo "Supported VS Code channels: default, pre-release" >&2
+            exit 1
+          fi
+
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "vscode_release=$vscode_release" >> "$GITHUB_OUTPUT"
+          echo "Release manifest: $manifest_path" >> "$GITHUB_STEP_SUMMARY"
+          echo "VS Code release: $vscode_release" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$vscode_release" == "true" ]]; then
+            echo "VS Code version: $version" >> "$GITHUB_STEP_SUMMARY"
+            echo "VS Code channel: $channel" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  verify:
+    name: Verify core and extension
+    needs: release_context
+    if: ${{ needs.release_context.outputs.vscode_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify core, CLI, and VS Code extension
+        run: pnpm check && pnpm vscode:check
+
+  package:
+    name: Package VSIX (${{ matrix.vscode_target }})
+    needs: release_context
+    if: ${{ needs.release_context.outputs.vscode_release == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vscode_target: linux-x64
+            go_target: linux-amd64
+            runner: ubuntu-24.04
+            executable: local-config
+          - vscode_target: linux-arm64
+            go_target: linux-arm64
+            runner: ubuntu-24.04-arm
+            executable: local-config
+          - vscode_target: alpine-x64
+            go_target: linux-amd64
+            runner: ubuntu-24.04
+            executable: local-config
+          - vscode_target: alpine-arm64
+            go_target: linux-arm64
+            runner: ubuntu-24.04-arm
+            executable: local-config
+          - vscode_target: darwin-x64
+            go_target: darwin-amd64
+            runner: macos-15-intel
+            executable: local-config
+          - vscode_target: darwin-arm64
+            go_target: darwin-arm64
+            runner: macos-15
+            executable: local-config
+          - vscode_target: win32-x64
+            go_target: windows-amd64
+            runner: windows-2025
+            executable: local-config.exe
+          - vscode_target: win32-arm64
+            go_target: windows-arm64
+            runner: windows-11-arm
+            executable: local-config.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify bundled CLI
+        shell: bash
+        env:
+          LOCAL_CONFIG_TARGET: ${{ matrix.go_target }}
+        run: |
+          test "$(go env GOOS)-$(go env GOARCH)" = "$LOCAL_CONFIG_TARGET"
+          pnpm --dir packages/vscode bundle-cli
+          "packages/vscode/bin/${{ matrix.executable }}" --version --json
+
+      - name: Package platform-specific VSIX
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.release_context.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.release_context.outputs.channel }}
+        run: |
+          version_args=()
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            version_args+=(
+              "$RELEASE_VERSION"
+              "--no-git-tag-version"
+              "--no-update-package-json"
+            )
+          fi
+
+          channel_args=()
+          if [[ "$RELEASE_CHANNEL" == "pre-release" ]]; then
+            channel_args+=("--pre-release")
+          fi
+
+          pnpm --dir packages/vscode exec vsce package \
+            "${version_args[@]}" \
+            "${channel_args[@]}" \
+            --target "${{ matrix.vscode_target }}" \
+            --no-dependencies \
+            --out "$RUNNER_TEMP/local-config-sync-${{ matrix.vscode_target }}.vsix"
+
+      - name: Upload platform-specific VSIX
+        uses: actions/upload-artifact@v7
+        with:
+          name: local-config-sync-vscode-${{ matrix.vscode_target }}
+          path: ${{ runner.temp }}/local-config-sync-${{ matrix.vscode_target }}.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish to Visual Studio Marketplace
+    if: >-
+      ${{ needs.release_context.outputs.is_release == 'true' &&
+          needs.release_context.outputs.vscode_release == 'true' }}
+    needs: [release_context, verify, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download platform-specific VSIX files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: local-config-sync-vscode-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish VSIX files
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          RELEASE_CHANNEL: ${{ needs.release_context.outputs.channel }}
+        run: |
+          if [[ -z "$VSCE_PAT" ]]; then
+            echo "Required GitHub Actions secret is missing: VSCE_PAT" >&2
+            exit 1
+          fi
+
+          mapfile -d '' vsix_files < <(
+            find artifacts -type f -name '*.vsix' -print0 | sort -z
+          )
+          if [[ "${#vsix_files[@]}" -ne 8 ]]; then
+            echo "Expected 8 platform-specific VSIX files, found ${#vsix_files[@]}" >&2
+            exit 1
+          fi
+
+          channel_args=()
+          if [[ "$RELEASE_CHANNEL" == "pre-release" ]]; then
+            channel_args+=("--pre-release")
+          fi
+
+          pnpm --dir packages/vscode exec vsce publish \
+            "${channel_args[@]}" \
+            --packagePath "${vsix_files[@]}"

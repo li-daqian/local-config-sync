@@ -124,6 +124,40 @@ pnpm --dir packages/vscode package --target linux-x64
 Linux CLI 使用 `CGO_ENABLED=0`，Alpine VSIX 可以复用相同 architecture 的 Linux binary。
 每个 platform-specific VSIX 只携带一个 native CLI。
 
+## 自动发布
+
+`.github/workflows/vscode-extension.yml` 在 pull request 和 `main` 分支上运行 core、CLI、extension
+检查，并生成以下八个 platform-specific VSIX：
+
+- `win32-x64`
+- `win32-arm64`
+- `darwin-x64`
+- `darwin-arm64`
+- `linux-x64`
+- `linux-arm64`
+- `alpine-x64`
+- `alpine-arm64`
+
+推送 `release-*` tag 时，workflow 从同名 `.release/manifests/<tag>.yaml` 读取 `vscode`
+artifact。只有声明了该 artifact 才发布，例如：
+
+```yaml
+schemaVersion: 1
+releaseId: release-2026.07.28.1
+artifacts:
+  vscode:
+    version: 0.1.0
+    channel: default
+```
+
+`channel` 支持 `default` 和 `pre-release`。manifest 中的 version 会写入 VSIX，但不会修改
+tag 对应 commit 中的 `package.json`。
+
+发布凭据使用 GitHub Repository secret `VSCE_PAT`。它是 Azure DevOps PAT，Organization 必须为
+`All accessible organizations`，scope 只选择 `Marketplace > Manage`；PAT 对应 Microsoft
+account 必须能管理 publisher `li-daqian`。Visual Studio Marketplace 的全局 Azure DevOps PAT
+将在 2026-12-01 停止工作，因此该认证方式需要迁移到 Microsoft Entra workload identity。
+
 ## 验证
 
 当前基线：
